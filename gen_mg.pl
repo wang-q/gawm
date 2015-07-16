@@ -309,7 +309,7 @@ gen_mg.pl - Generate database from fasta files
     perl init/insert_gc.pl -d S288Cvsself --parallel 4
     
     cd ~/Script/gawm
-    mongo S288c --eval "db.dropDatabase();" 
+    mongo S288c --eval "db.dropDatabase();"
     perl gen_mg.pl -d S288c --dir ~/data/alignment/yeast_combine/S288C --name S288c --parallel 1
 
 =cut

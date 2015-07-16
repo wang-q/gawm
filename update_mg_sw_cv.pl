@@ -1,6 +1,7 @@
 #!/usr/bin/perl
 use strict;
 use warnings;
+use autodie;
 
 use Getopt::Long;
 use Pod::Usage;
@@ -12,25 +13,31 @@ $MongoDB::BSON::looks_like_number = 1;
 $MongoDB::BSON::utf8_flag_on      = 0;
 use MongoDB::OID;
 
-use AlignDB::Run;
+use MCE;
+
+use AlignDB::GC;
 use AlignDB::Stopwatch;
 use AlignDB::Util qw(:all);
 
 use FindBin;
-use lib "$FindBin::Bin/../lib";
-use AlignDB;
-use AlignDB::GC;
 
 #----------------------------------------------------------#
 # GetOpt section
 #----------------------------------------------------------#
+my $Config = Config::Tiny->new;
+$Config = Config::Tiny->read("$FindBin::Bin/config.ini");
+
 # record ARGV and Config
-my $stopwatch = AlignDB::Stopwatch->new;
+my $stopwatch = AlignDB::Stopwatch->new(
+    program_name => $0,
+    program_argv => [@ARGV],
+    program_conf => $Config,
+);
 
 # Database init values
-my $server = "localhost";
-my $port   = 27017;
-my $dbname = "alignDB";
+my $server = $Config->{database}{server};
+my $port   = $Config->{database}{port};
+my $dbname = $Config->{database}{db};
 
 my $stat_segment_size = 500;
 my $stat_window_size  = 100;
@@ -73,16 +80,10 @@ my @jobs;
     my $db = $mongo->get_database($dbname);
 
     my $coll = $db->get_collection('align');
+    @jobs = $coll->find->all;
+    printf "There are %d aligns totally.\n", scalar @jobs;
 
-    my @aligns = $coll->find->all;
-
-    printf "There are %d aligns totally.\n", scalar @aligns;
-    while ( scalar @aligns ) {
-        my @batching = splice @aligns, 0, $batch_number;
-        push @jobs, [@batching];
-    }
-
-    # init disk space
+    # pre-allocate disk space
     print "Init disk space\n";
     $db->get_collection('ofgsw')->update(
         { gc_cv => { '$exists' => 0, } },
@@ -111,8 +112,13 @@ my @jobs;
 # start update
 #----------------------------------------------------------#
 my $worker = sub {
-    my $job    = shift;
-    my @aligns = @$job;
+    my ( $self, $chunk_ref, $chunk_id ) = @_;
+    my @aligns = @{$chunk_ref};
+
+    my $wid = MCE->wid;
+
+    my $inner_watch = AlignDB::Stopwatch->new;
+    $inner_watch->block_message("* Process task [$chunk_id] by worker #$wid");
 
     # wait forever for responses
     my $mongo = MongoDB::MongoClient->new(
@@ -126,17 +132,12 @@ my $worker = sub {
     my $coll_ofgsw = $db->get_collection('ofgsw');
     my $coll_gsw   = $db->get_collection('gsw');
 
-    # mocking AlignDB::GC
-    my $obj = AlignDB->new( mocking => 1, );
-    AlignDB::GC->meta->apply($obj);
-    my %opt = (
+    # AlignDB::GC
+    my $obj = AlignDB::GC->new(
         stat_window_size => $stat_window_size,
         stat_window_step => $stat_window_step,
         skip_mdcw        => 1,
     );
-    for my $key ( sort keys %opt ) {
-        $obj->$key( $opt{$key} );
-    }
 
     for my $align (@aligns) {
         my $chr_name  = $align->{chr_name};
@@ -228,12 +229,8 @@ my $worker = sub {
 #----------------------------------------------------------#
 # start update
 #----------------------------------------------------------#
-my $run = AlignDB::Run->new(
-    parallel => $parallel,
-    jobs     => \@jobs,
-    code     => $worker,
-);
-$run->run;
+my $mce = MCE->new( max_workers => $parallel, chunk_size => $batch_number, );
+$mce->forchunk( \@jobs, $worker, );
 
 #----------------------------#
 # check

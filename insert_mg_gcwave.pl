@@ -14,28 +14,30 @@ use MongoDB::OID;
 
 use MCE;
 
+use AlignDB::GC;
 use AlignDB::IntSpan;
 use AlignDB::Stopwatch;
 use AlignDB::Util qw(:all);
 
 use FindBin;
-use lib "$FindBin::Bin/../lib";
-use AlignDB;
-use AlignDB::GC;
 
 #----------------------------------------------------------#
 # GetOpt section
 #----------------------------------------------------------#
 my $Config = Config::Tiny->new;
-$Config = Config::Tiny->read("$FindBin::Bin/../alignDB.ini");
+$Config = Config::Tiny->read("$FindBin::Bin/config.ini");
 
 # record ARGV and Config
-my $stopwatch = AlignDB::Stopwatch->new;
+my $stopwatch = AlignDB::Stopwatch->new(
+    program_name => $0,
+    program_argv => [@ARGV],
+    program_conf => $Config,
+);
 
 # Database init values
-my $server = "localhost";
-my $port   = 27017;
-my $dbname = "alignDB";
+my $server = $Config->{database}{server};
+my $port   = $Config->{database}{port};
+my $dbname = $Config->{database}{db};
 
 # AlignDB::GC options
 my $wave_window_size  = $Config->{gc}{wave_window_size};
@@ -86,6 +88,7 @@ my @jobs;
 
     my $coll = $db->get_collection('align');
     @jobs = $coll->find->all;
+    printf "There are %d aligns totally.\n", scalar @jobs;
 
     {
         my $coll_extreme = $db->get_collection('extreme');
@@ -135,9 +138,7 @@ my $worker = sub {
     my $coll_seq = $db->get_collection('sequence');
 
     # mocking AlignDB::GC
-    my $obj = AlignDB->new( mocking => 1, );
-    AlignDB::GC->meta->apply($obj);
-    my %opt = (
+    my $obj = AlignDB::GC->new(
         wave_window_size => $wave_window_size,
         wave_window_step => $wave_window_step,
         vicinal_size     => $vicinal_size,
@@ -147,9 +148,6 @@ my $worker = sub {
         stat_window_step => $stat_window_step,
         skip_mdcw        => 1,
     );
-    for my $key ( sort keys %opt ) {
-        $obj->$key( $opt{$key} );
-    }
 
     for my $align (@aligns) {
         my $chr_name  = $align->{chr_name};
@@ -468,14 +466,15 @@ insert_mg_gcwave.pl - Add GC ralated tables to alignDB
 =head1 SYNOPSIS
 
     # S288c
-    perl mg/init_mg.pl -d S288c
-    perl mg/gen_mg.pl -d S288c -t "559292,S288c" --dir ~/data/alignment/yeast_combine/S288C  --parallel 1
+    mongo S288c --eval "db.dropDatabase();"
+    
+    # Runtime 5 seconds.
+    perl gen_mg.pl -d S288c -n S288c --dir ~/data/alignment/yeast_combine/S288C  --parallel 1
+    
+    # Runtime 38 seconds.
+    perl insert_mg_gcwave.pl -d S288c --batch 1 --parallel 4
     
     # Runtime 21 seconds.
-    perl mg/insert_mg_gcwave.pl -d S288c --batch 1 --parallel 4
-    
-    # Runtime 1 minute and 41 seconds.
-    perl mg/update_mg_sw_cv.pl -d S288c --batch 1 --parallel 4
+    perl update_mg_sw_cv.pl -d S288c --batch 1 --parallel 4
 
 =cut
-
