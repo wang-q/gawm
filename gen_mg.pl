@@ -1,6 +1,7 @@
 #!/usr/bin/perl
 use strict;
 use warnings;
+use autodie;
 
 use Getopt::Long;
 use Pod::Usage;
@@ -8,7 +9,8 @@ use Config::Tiny;
 use YAML qw(Dump Load DumpFile LoadFile);
 
 use File::Find::Rule;
-use File::Basename;
+use Path::Tiny;
+use Text::CSV_XS;
 
 use MongoDB;
 $MongoDB::BSON::looks_like_number = 1;
@@ -26,18 +28,26 @@ use FindBin;
 #----------------------------------------------------------#
 # GetOpt section
 #----------------------------------------------------------#
+my $Config = Config::Tiny->new;
+$Config = Config::Tiny->read("$FindBin::Bin/config.ini");
+
 # record ARGV and Config
-my $stopwatch = AlignDB::Stopwatch->new;
+my $stopwatch = AlignDB::Stopwatch->new(
+    program_name => $0,
+    program_argv => [@ARGV],
+    program_conf => $Config,
+);
 
 # Database init values
-my $server = "localhost";
-my $port   = 27017;
-my $dbname = "alignDB";
+my $server = $Config->{database}{server};
+my $port   = $Config->{database}{port};
+my $dbname = $Config->{database}{db};
 
 # dir
 my $dir;
 
-my $target;    # target sequence
+my $size_file;
+my $common_name;
 
 # mongodb has write lock, so we should make perl busy
 my $truncated_length = 500_000;
@@ -58,7 +68,8 @@ GetOptions(
     'P|port=i'   => \$port,
     'd|db=s'     => \$dbname,
     'dir=s'      => \$dir,
-    'target=s'   => \$target,
+    's|size=s'   => \$size_file,
+    'n|name=s'   => \$common_name,
     'length=i'   => \$truncated_length,
     'fill=i'     => \$fill,
     'min=i'      => \$min_length,
@@ -69,16 +80,30 @@ pod2usage(1) if $help;
 pod2usage( -exitstatus => 0, -verbose => 2 ) if $man;
 
 #----------------------------------------------------------#
-# Search for all files and push their paths to @axt_files
+# Search for size and fasta files
 #----------------------------------------------------------#
+if ( !defined $size_file ) {
+    if ( path( $dir, 'chr.sizes' )->is_file ) {
+        $size_file = path( $dir, 'chr.sizes' )->absolute->stringify;
+        printf "--size sest to $size_file\n";
+    }
+    else {
+        die "--size chr.sizes is needed\n";
+    }
+}
+elsif ( !-e $size_file ) {
+    die "--size chr.sizes doesn't exist\n";
+}
+
+if (!defined $common_name) {
+    $common_name = path($dir)->basename;
+}
+
 my @files
     = sort File::Find::Rule->file->name( '*.fa', '*.fas', '*.fasta' )->in($dir);
 printf "\n----Total .fa Files: %4s----\n\n", scalar @files;
 
-{    # update names
-    my ( $target_taxon_id, $target_name ) = split ",", $target;
-    $target_name = $target_taxon_id unless $target_name;
-
+{
     my $mongo = MongoDB::MongoClient->new(
         host          => $server,
         port          => $port,
@@ -86,17 +111,30 @@ printf "\n----Total .fa Files: %4s----\n\n", scalar @files;
     );
     my $db = $mongo->get_database($dbname);
 
-    my $coll_taxon = $db->get_collection('taxon');
-    $coll_taxon->update( { 'taxon_id' => $target_taxon_id },
-        { '$set' => { 'common_name' => $target_name } } );
-
-    # chromosomes' taxon info is denormalized
     my $coll_chr = $db->get_collection('chromosome');
-    $coll_chr->update(
-        { 'taxon_id' => $target_taxon_id },
-        { '$set'     => { 'taxon.common_name' => $target_name } },
-        { 'multiple' => 1 },
-    );
+
+    my $csv = Text::CSV_XS->new( { binary => 1, eol => "\n", sep => "\t" } );
+    open my $csv_fh, "<", $size_file;
+    my @fields = qw{chr_name chr_length};
+
+    my @chrs;
+    while ( my $row = $csv->getline($csv_fh) ) {
+        my $data = {};
+        for my $i ( 0 .. $#fields ) {
+            $data->{ $fields[$i] } = $row->[$i];
+        }
+        $data->{common_name} = $common_name;
+
+        push @chrs, $data;
+    }
+    close $csv_fh;
+
+    $coll_chr->batch_insert( \@chrs, { safe => 1 }, );
+
+    $coll_chr->ensure_index( { 'chr_name' => 1 } );
+
+    print
+        "There are @{[$coll_chr->count]} documents in collection chromosome\n";
 }
 
 #----------------------------------------------------------#
@@ -105,7 +143,7 @@ printf "\n----Total .fa Files: %4s----\n\n", scalar @files;
 my $worker = sub {
     my ( $self, $chunk_ref, $chunk_id ) = @_;
     my $infile = $chunk_ref->[0];
-    
+
     my $wid = MCE->wid;
 
     my $inner_watch = AlignDB::Stopwatch->new;
@@ -118,14 +156,8 @@ my $worker = sub {
         query_timeout => -1,
     )->get_database($dbname);
 
-    my ( $target_taxon_id, $target_name ) = split ",", $target;
-
-    die "target_taxon_id not defined\n" unless $target_taxon_id;
-    $target_name = $target_taxon_id unless $target_name;
-    my $chr_name = basename($infile);
-    $chr_name =~ s/\..+?$//;
-
     my ( $seq_of, $seq_names ) = read_fasta($infile);
+    my $chr_name   = $seq_names->[0];
     my $chr_seq    = $seq_of->{ $seq_names->[0] };
     my $chr_length = length $chr_seq;
 
@@ -133,7 +165,7 @@ my $worker = sub {
     my $coll_chr = $db->get_collection('chromosome');
     my $chr_id
         = $coll_chr->find_one(
-        { 'taxon.taxon_id' => $target_taxon_id, 'chr_name' => $chr_name } );
+        { 'common_name' => $common_name, 'chr_name' => $chr_name } );
     return unless $chr_id;
     $chr_id = $chr_id->{_id};
 
@@ -187,17 +219,16 @@ my $worker = sub {
         my $seq     = substr $chr_seq, $start - 1, $length;
 
         my $data_seq = {
-            taxon_id   => $target_taxon_id,
-            name       => $target_name,
-            chr_id     => $chr_id,
-            chr_name   => $chr_name,
-            chr_start  => $start,
-            chr_end    => $end,
-            chr_strand => '+',
-            seq        => $seq,
-            length     => $length,
-            runlist    => $runlist,
-            level      => 1,                  # top level
+            common_name => $common_name,
+            chr_id      => $chr_id,
+            chr_name    => $chr_name,
+            chr_start   => $start,
+            chr_end     => $end,
+            chr_strand  => '+',
+            seq         => $seq,
+            length      => $length,
+            runlist     => $runlist,
+            level       => 1,              # top level
         };
         my $seq_id = $coll_seq->insert($data_seq);
 
@@ -222,7 +253,7 @@ my $worker = sub {
 # start
 #----------------------------------------------------------#
 my $mce = MCE->new( max_workers => $parallel, );
-$mce->foreach( \@files, $worker, ); # foreach implies chunk_size => 1.
+$mce->foreach( \@files, $worker, );    # foreach implies chunk_size => 1.
 
 # indexing
 {
@@ -253,37 +284,32 @@ __END__
 
 =head1 NAME
 
-    gen_alignDB_genome.pl - Generate alignDB from fasta files
+gen_mg.pl - Generate database from fasta files
 
 =head1 SYNOPSIS
 
-    gen_alignDB_genome.pl [options]
+    perl gen_mg.pl [options]
       Options:
         --help              brief help message
         --man               full documentation
-        --server            MySQL server IP/Domain name
-        --port              MySQL server port
-        --username          username
-        --password          password
-        --db                database name
+        --server  -s        MongoDB server IP/Domain name
+        --port    -P        MongoDB server port
+        --db      -d        database name
         --dir               genome files' directory
-        --target            "target_taxon_id,target_name"
+        --size    -s        chr.sizes
+        --name    -n        common name
+        --length
+        --fill
+        --min
         --parallel          run in parallel mode
 
+    cd ~/Script/alignDB
+    perl init/init_alignDB.pl -d S288Cvsself
+    perl init/gen_alignDB_genome.pl -d S288Cvsself -t "4932,S288C" --dir /home/wangq/data/alignment/yeast65/S288C/  --parallel 4
+    perl init/insert_gc.pl -d S288Cvsself --parallel 4
+    
+    cd ~/Script/gawm
+    mongo S288c --eval "db.dropDatabase();" 
+    perl gen_mg.pl -d S288c --dir ~/data/alignment/yeast_combine/S288C --name S288c --parallel 1
+
 =cut
-
-perl init/init_alignDB.pl -d Athvsself
-perl init/gen_alignDB_genome.pl -d Athvsself -t "3702,Ath" --dir /home/wangq/data/alignment/arabidopsis19/ath_65  --parallel 4
-
->perl init_alignDB.pl -d nipvsself
->perl gen_alignDB_genome.pl -d nipvsself -t "39947,Nip" --dir e:\data\alignment\rice\nip_58\  --parallel 4
-
->perl init_alignDB.pl -d 9311vsself
->perl gen_alignDB_genome.pl -d 9311vsself -t "39946,9311" --dir e:\data\alignment\rice\9311_58\  --parallel 4
-
-perl init/init_alignDB.pl -d S288Cvsself
-perl init/gen_alignDB_genome.pl -d S288Cvsself -t "4932,S288C" --dir /home/wangq/data/alignment/yeast65/S288C/  --parallel 4
-perl init/insert_gc.pl -d S288Cvsself --parallel 4
-
-perl mg/init_mg.pl -d alignDB
-perl mg/gen_mg.pl -d alignDB -t "4932,S288C" --dir d:\data\alignment\self_alignment\S288C\  --parallel 1
