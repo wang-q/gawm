@@ -346,7 +346,6 @@ count_bed.pl - Add bed files to bed and count intersections.
 
 =head1 SYNOPSIS
 
-perl mg/count_mg_bed.pl -d alignDB -f d:/wq/Scripts/alignDB/ofg/spo11/spo11_hot.bed --batch 1 --parallel 1
-
+    perl count_bed.pl -d alignDB -f ~/Scripts/alignDB/ofg/spo11/spo11_hot.bed --batch 1 --parallel 1
 
 =cut

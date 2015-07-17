@@ -100,8 +100,6 @@ my $worker_insert = sub {
     my ( $self, $chunk_ref, $chunk_id ) = @_;
     my $job = $chunk_ref->[0];
 
-    #print Dump $chunk_ref;
-
     my $wid = MCE->wid;
 
     my $inner_watch = AlignDB::Stopwatch->new;
@@ -419,6 +417,6 @@ insert_bed.pl - Add bed files to ofg and generate ofgsw.
 
     mongo S288c --eval "db.dropDatabase();"
     perl gen_mg.pl -d S288c -n S288c --dir ~/data/alignment/yeast_combine/S288C  --parallel 1
-    perl insert_mg_bed.pl -d alignDB --tag hot --type hot -f ~/Scripts/alignDB/ofg/spo11/spo11_hot.bed --batch 10 --parallel 1
+    perl insert_bed.pl -d alignDB --tag hot --type hot -f ~/Scripts/alignDB/ofg/spo11/spo11_hot.bed --batch 10 --parallel 1
 
 =cut
