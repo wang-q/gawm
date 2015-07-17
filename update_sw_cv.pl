@@ -20,6 +20,8 @@ use AlignDB::Stopwatch;
 use AlignDB::Util qw(:all);
 
 use FindBin;
+use lib "$FindBin::Bin/lib";
+use MyUtil qw(center_resize check_coll);
 
 #----------------------------------------------------------#
 # GetOpt section
@@ -242,8 +244,8 @@ $mce->forchunk( \@jobs, $worker, );
         query_timeout => -1,
     );
     my $db = $mongo->get_database($dbname);
-    $stopwatch->block_message( check( $db, 'ofgsw', 'gc_cv' ) );
-    $stopwatch->block_message( check( $db, 'gsw',   'gc_cv' ) );
+    $stopwatch->block_message( check_coll( $db, 'ofgsw', 'gc_cv' ) );
+    $stopwatch->block_message( check_coll( $db, 'gsw',   'gc_cv' ) );
 
 }
 
@@ -251,58 +253,14 @@ $stopwatch->end_message;
 
 exit;
 
-sub check {
-    my $db    = shift;
-    my $name  = shift;
-    my $field = shift;
-
-    my $coll = $db->get_collection($name);
-
-    my $total      = $coll->find->count;
-    my $exists     = $coll->find( { $field => { '$exists' => 1 } } )->count;
-    my $non_exists = $coll->find( { $field => { '$exists' => 0 } } )->count;
-
-    return "For collection [$name], check field [$field]:\n"
-        . "    Total $total\n    Exists $exists\n    Non exists $non_exists\n";
-
-}
-
-sub center_resize {
-    my $old_set    = shift;
-    my $parent_set = shift;
-    my $resize     = shift;
-
-    # find the middles of old_set
-    my $half_size           = int( $old_set->size / 2 );
-    my $midleft             = $old_set->at($half_size);
-    my $midright            = $old_set->at( $half_size + 1 );
-    my $midleft_parent_idx  = $parent_set->index($midleft);
-    my $midright_parent_idx = $parent_set->index($midright);
-
-    return unless $midleft_parent_idx and $midright_parent_idx;
-
-    # map to parent
-    my $parent_size  = $parent_set->size;
-    my $half_resize  = int( $resize / 2 );
-    my $new_left_idx = $midleft_parent_idx - $half_resize + 1;
-    $new_left_idx = 1 if $new_left_idx < 1;
-    my $new_right_idx = $midright_parent_idx + $half_resize - 1;
-    $new_right_idx = $parent_size if $new_right_idx > $parent_size;
-
-    my $new_set = $parent_set->slice( $new_left_idx, $new_right_idx );
-
-    return $new_set;
-}
-
 __END__
 
 =head1 NAME
 
-    update_sw_cv.pl - CV for codingsw, ofgsw, isw and gsw
+update_sw_cv.pl - CV for ofgsw and gsw
 
 =head1 SYNOPSIS
 
-perl mg/update_mg_sw_cv.pl -d alignDB --batch 10 --parallel 1
+    perl update_sw_cv.pl -d alignDB --batch 10 --parallel 1
 
 =cut
-

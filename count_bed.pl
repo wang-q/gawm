@@ -23,6 +23,8 @@ use AlignDB::Window;
 use AlignDB::Stopwatch;
 
 use FindBin;
+use lib "$FindBin::Bin/lib";
+use MyUtil qw(check_coll);
 
 #----------------------------------------------------------#
 # GetOpt section
@@ -270,8 +272,8 @@ if ( $run eq "all" or $run eq "count" ) {
         = MCE->new( max_workers => $parallel, chunk_size => $batch_number, );
     $mce->forchunk( \@aligns, $worker_count, );
 
-    $stopwatch->block_message( check( $db, 'gsw',   'bed_count' ) );
-    $stopwatch->block_message( check( $db, 'ofgsw', 'bed_count' ) );
+    $stopwatch->block_message( check_coll( $db, 'gsw',   'bed_count' ) );
+    $stopwatch->block_message( check_coll( $db, 'ofgsw', 'bed_count' ) );
 }
 
 $stopwatch->end_message;
@@ -319,23 +321,6 @@ sub count_bed_in_sw {
     )->count;
 
     return $count;
-}
-
-sub check {
-    my $db    = shift;
-    my $name  = shift;
-    my $field = shift;
-
-    my $coll = $db->get_collection($name);
-
-    my $total      = $coll->find->count;
-    my $exists     = $coll->find( { $field => { '$exists' => 1 } } )->count;
-    my $non_exists = $coll->find( { $field => { '$exists' => 0 } } )->count;
-    my $non_zero   = $coll->find( { $field => { '$gt' => 0 } } )->count;
-
-    return "For collection [$name], check field [$field]:\n"
-        . "    Total $total\n    Exists $exists\n    Non exists $non_exists\n    Non zero $non_zero\n";
-
 }
 
 __END__

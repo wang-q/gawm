@@ -26,6 +26,8 @@ use AlignDB::Stopwatch;
 use AlignDB::Util qw(:all);
 
 use FindBin;
+use lib "$FindBin::Bin/lib";
+use MyUtil qw(center_resize);
 
 #----------------------------------------------------------#
 # GetOpt section
@@ -379,33 +381,6 @@ my $worker_sw = sub {
 $stopwatch->end_message;
 
 exit;
-
-sub center_resize {
-    my $old_set    = shift;
-    my $parent_set = shift;
-    my $resize     = shift;
-
-    # find the middles of old_set
-    my $half_size           = int( $old_set->size / 2 );
-    my $midleft             = $old_set->at($half_size);
-    my $midright            = $old_set->at( $half_size + 1 );
-    my $midleft_parent_idx  = $parent_set->index($midleft);
-    my $midright_parent_idx = $parent_set->index($midright);
-
-    return unless $midleft_parent_idx and $midright_parent_idx;
-
-    # map to parent
-    my $parent_size  = $parent_set->size;
-    my $half_resize  = int( $resize / 2 );
-    my $new_left_idx = $midleft_parent_idx - $half_resize + 1;
-    $new_left_idx = 1 if $new_left_idx < 1;
-    my $new_right_idx = $midright_parent_idx + $half_resize - 1;
-    $new_right_idx = $parent_size if $new_right_idx > $parent_size;
-
-    my $new_set = $parent_set->slice( $new_left_idx, $new_right_idx );
-
-    return $new_set;
-}
 
 __END__
 
