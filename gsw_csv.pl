@@ -13,24 +13,26 @@ $MongoDB::BSON::looks_like_number = 1;
 $MongoDB::BSON::utf8_flag_on      = 0;
 use MongoDB::OID;
 
-use AlignDB::IntSpan;
 use AlignDB::Stopwatch;
 
 use FindBin;
-use lib "$FindBin::Bin/../lib";
-use AlignDB;
-use AlignDB::WriteExcel;
 
 #----------------------------------------------------------#
 # GetOpt section
 #----------------------------------------------------------#
+my $Config = Config::Tiny->read("$FindBin::Bin/config.ini");
+
 # record ARGV and Config
-my $stopwatch = AlignDB::Stopwatch->new;
+my $stopwatch = AlignDB::Stopwatch->new(
+    program_name => $0,
+    program_argv => [@ARGV],
+    program_conf => $Config,
+);
 
 # Database init values
-my $server = "localhost";
-my $port   = 27017;
-my $dbname = "alignDB";
+my $server = $Config->{database}{server};
+my $port   = $Config->{database}{port};
+my $dbname = $Config->{database}{db};
 
 my $outfile;
 
@@ -43,12 +45,13 @@ GetOptions(
     's|server=s' => \$server,
     'P|port=i'   => \$port,
     'd|db=s'     => \$dbname,
+    'o|output=s' => \$outfile,
 ) or pod2usage(2);
 
 pod2usage(1) if $help;
 pod2usage( -exitstatus => 0, -verbose => 2 ) if $man;
 
-$outfile = "$dbname.mg.xlsx" unless $outfile;
+$outfile = "$dbname.gsw.csv" unless $outfile;
 
 #----------------------------------------------------------#
 # init
@@ -82,8 +85,8 @@ my $db = $mongo->get_database($dbname);
 #    window w ON g.window_id = w.window_id
 #where
 #    gsw_amplitude >= 0.1;
-my $output = "$dbname.gsw.csv";
-open my $fh, '>', $output;
+
+open my $fh, '>', $outfile;
 my @headers = qw{
     distance_to_trough distance_to_crest window_gc window_cv trough_gc crest_gc
     gradient value flag
@@ -91,8 +94,9 @@ my @headers = qw{
 
 print {$fh} join( ",", @headers ), "\n";
 
-my $coll = $db->get_collection('gsw');
+my $coll   = $db->get_collection('gsw');
 my $cursor = $coll->find;
+
 #my $cursor = $coll->find( { chr_name => 'chr1' } );
 while ( my $object = $cursor->next ) {
     print {$fh} join( ",",
@@ -105,4 +109,5 @@ while ( my $object = $cursor->next ) {
 }
 
 $stopwatch->end_message;
+
 exit;

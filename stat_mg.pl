@@ -1,6 +1,7 @@
 #!/usr/bin/perl
 use strict;
 use warnings;
+use autodie;
 
 use Getopt::Long;
 use Pod::Usage;
@@ -14,22 +15,26 @@ use MongoDB::OID;
 
 use AlignDB::IntSpan;
 use AlignDB::Stopwatch;
+use AlignDB::ToXLSX;
 
 use FindBin;
-use lib "$FindBin::Bin/../lib";
-use AlignDB;
-use AlignDB::WriteExcel;
 
 #----------------------------------------------------------#
 # GetOpt section
 #----------------------------------------------------------#
+my $Config = Config::Tiny->read("$FindBin::Bin/config.ini");
+
 # record ARGV and Config
-my $stopwatch = AlignDB::Stopwatch->new;
+my $stopwatch = AlignDB::Stopwatch->new(
+    program_name => $0,
+    program_argv => [@ARGV],
+    program_conf => $Config,
+);
 
 # Database init values
-my $server = "localhost";
-my $port   = 27017;
-my $dbname = "alignDB";
+my $server = $Config->{database}{server};
+my $port   = $Config->{database}{port};
+my $dbname = $Config->{database}{db};
 
 my $outfile;
 my $by = "tag";    # "type" or "tt"
@@ -57,7 +62,7 @@ $outfile = "$dbname.mg.xlsx" unless $outfile;
 #----------------------------------------------------------#
 $stopwatch->start_message("Do stat for $dbname...");
 
-my $write_obj = AlignDB::WriteExcel->new(
+my $write_obj = AlignDB::ToXLSX->new(
     outfile => $outfile,
     mocking => 1,
 );

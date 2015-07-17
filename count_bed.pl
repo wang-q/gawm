@@ -29,8 +29,7 @@ use MyUtil qw(check_coll);
 #----------------------------------------------------------#
 # GetOpt section
 #----------------------------------------------------------#
-my $Config = Config::Tiny->new;
-$Config = Config::Tiny->read("$FindBin::Bin/config.ini");
+my $Config = Config::Tiny->read("$FindBin::Bin/config.ini");
 
 # record ARGV and Config
 my $stopwatch = AlignDB::Stopwatch->new(
@@ -151,8 +150,13 @@ my $worker_insert = sub {
 };
 
 my $worker_count = sub {
-    my $job    = shift;
-    my @aligns = @$job;
+    my ( $self, $chunk_ref, $chunk_id ) = @_;
+    my @aligns = @{$chunk_ref};
+
+    my $wid = MCE->wid;
+
+    my $inner_watch = AlignDB::Stopwatch->new;
+    $inner_watch->block_message("* Process task [$chunk_id] by worker #$wid");
 
     # wait forever for responses
     my $mongo = MongoDB::MongoClient->new(

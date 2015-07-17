@@ -26,8 +26,7 @@ use MyUtil qw(center_resize);
 #----------------------------------------------------------#
 # GetOpt section
 #----------------------------------------------------------#
-my $Config = Config::Tiny->new;
-$Config = Config::Tiny->read("$FindBin::Bin/config.ini");
+my $Config = Config::Tiny->read("$FindBin::Bin/config.ini");
 
 # record ARGV and Config
 my $stopwatch = AlignDB::Stopwatch->new(
@@ -447,9 +446,9 @@ insert_mg_gcwave.pl - Add GC ralated tables to alignDB
     perl gen_mg.pl -d S288c -n S288c --dir ~/data/alignment/yeast_combine/S288C  --parallel 1
     
     # Runtime 38 seconds.
-    perl insert_mg_gcwave.pl -d S288c --batch 1 --parallel 4
+    perl insert_gcwave.pl -d S288c --batch 1 --parallel 4
     
     # Runtime 21 seconds.
-    perl update_mg_sw_cv.pl -d S288c --batch 1 --parallel 4
+    perl update_sw_cv.pl -d S288c --batch 1 --parallel 4
 
 =cut
