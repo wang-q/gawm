@@ -130,32 +130,30 @@ perl mg/stat_mg.pl -d S288c
 #----------------------------------------------------------#
 # S288C | linux
 #----------------------------------------------------------#
-cd ~/Scripts/alignDB
+cd ~/Scripts/gawm
 
-perl mg/init_mg.pl -d S288c
-perl mg/gen_mg.pl -d S288c -t "559292,S288c" --dir ~/data/alignment/self_alignment/S288C  --parallel 1
+# S288c
+mongo S288c --eval "db.dropDatabase();"
 
-perl mg/gen_mg_mce.pl -d S288c -t "559292,S288c" --dir ~/data/alignment/self_alignment/S288C  --parallel 1
+# Runtime 5 seconds.
+perl gen_mg.pl -d S288c -n S288c --dir ~/data/alignment/yeast_combine/S288C  --parallel 1
 
-
-# Runtime 2 minutes and 2 seconds.
-perl mg/insert_mg_gcwave.pl -d S288c --batch 1 --parallel 1
-
-perl mg/insert_mg_gcwave_mce.pl -d S288c --batch 1 --parallel 1
-
-# Runtime 1 minute and 3 seconds.
-perl mg/insert_mg_gcwave.pl -d S288c --batch 1 --parallel 2
-
-# Runtime 31 seconds.
-perl mg/insert_mg_gcwave.pl -d S288c --batch 1 --parallel 4
+# Runtime 38 seconds.
+perl insert_gcwave.pl -d S288c --batch 1 --parallel 4
 
 # Runtime 21 seconds.
-perl mg/insert_mg_gcwave.pl -d S288c --batch 1 --parallel 8
+perl update_sw_cv.pl -d S288c --batch 1 --parallel 4
 
-# Runtime 18 seconds.
-perl mg/insert_mg_gcwave.pl -d S288c --batch 1 --parallel 12
+# Runtime 1 second.
+perl stat_mg.pl -d S288c
 
-~/share/mongodb/bin/mongodump --db S288c --out ~/data/mongodb/
+# Runtime 1 second.
+perl count_bed.pl -d S288c --run insert -f ~/Scripts/alignDB/ofg/spo11/spo11_hot.bed --batch 1 --parallel 1
+
+# Runtime 22 seconds.
+perl count_bed.pl -d S288c --run count --batch 1 --parallel 4
+
+perl stat_mg.pl -d S288c
 
 #----------------------------#
 # gene part
@@ -498,10 +496,9 @@ perl mg\chart_mg.pl --replace ofg="insert sites" -i  d:\wq\GC\autochart\131230_r
 #----------------------------#
 # spo11
 #----------------------------#
-cd ~/Scripts/alignDB
+cd ~/Scripts/gawm
 
-perl mg/init_mg.pl -d S288C_spo11
-perl mg/gen_mg.pl -d S288C_spo11 -t "4932,S288C" --dir ~/data/alignment/self_alignment/S288C  --length 10000000 --parallel 8
+perl gen_mg.pl -d S288c_spo11 -n S288c --dir ~/data/alignment/yeast_combine/S288C  --length 10000000 --parallel 4
 
 # Runtime 33 second.
 perl mg/insert_mg_bed.pl -d S288C_spo11 -tag spo11 -f ~/Scripts/alignDB/ofg/spo11/spo11_hot.bed --batch 1 --parallel 8
