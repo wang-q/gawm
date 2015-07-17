@@ -1,6 +1,7 @@
 #!/usr/bin/perl
 use strict;
 use warnings;
+use autodie;
 
 use Getopt::Long;
 use Pod::Usage;
@@ -16,8 +17,8 @@ $MongoDB::BSON::looks_like_number = 1;
 $MongoDB::BSON::utf8_flag_on      = 0;
 use MongoDB::OID;
 
+use MCE;
 use AlignDB::IntSpan;
-use AlignDB::Run;
 use AlignDB::Window;
 use AlignDB::Stopwatch;
 
@@ -26,13 +27,20 @@ use FindBin;
 #----------------------------------------------------------#
 # GetOpt section
 #----------------------------------------------------------#
+my $Config = Config::Tiny->new;
+$Config = Config::Tiny->read("$FindBin::Bin/config.ini");
+
 # record ARGV and Config
-my $stopwatch = AlignDB::Stopwatch->new;
+my $stopwatch = AlignDB::Stopwatch->new(
+    program_name => $0,
+    program_argv => [@ARGV],
+    program_conf => $Config,
+);
 
 # Database init values
-my $server = "localhost";
-my $port   = 27017;
-my $dbname = "alignDB";
+my $server = $Config->{database}{server};
+my $port   = $Config->{database}{port};
+my $dbname = $Config->{database}{db};
 
 my @files;
 
@@ -69,10 +77,17 @@ pod2usage( -exitstatus => 0, -verbose => 2 ) if $man;
 $stopwatch->start_message("Count bed of $dbname...");
 
 #----------------------------------------------------------#
-# read data
+# workers
 #----------------------------------------------------------#
 my $worker_insert = sub {
-    my $file = shift;
+    my ( $self, $chunk_ref, $chunk_id ) = @_;
+    my $file = $chunk_ref->[0];
+
+    my $wid = MCE->wid;
+
+    my $inner_watch = AlignDB::Stopwatch->new;
+    $inner_watch->block_message("* Process task [$chunk_id] by worker #$wid");
+
     print "Reading file [$file]\n";
 
     # wait forever for responses
@@ -133,32 +148,6 @@ my $worker_insert = sub {
     print "Insert done.\n";
 };
 
-if ( $run eq "all" or $run eq "insert" ) {
-    my $mongo = MongoDB::MongoClient->new(
-        host          => $server,
-        port          => $port,
-        query_timeout => -1,
-    );
-    my $db       = $mongo->get_database($dbname);
-    my $coll_bed = $db->get_collection('bed');
-
-    $coll_bed->drop;
-    $coll_bed->ensure_index( { 'align_id'  => 1 } );
-    $coll_bed->ensure_index( { 'chr_name'  => 1 } );
-    $coll_bed->ensure_index( { 'chr_start' => 1 } );
-    $coll_bed->ensure_index( { 'chr_end'   => 1 } );
-
-    my $run_insert = AlignDB::Run->new(
-        parallel => $parallel,
-        jobs     => \@files,
-        code     => $worker_insert,
-    );
-    $run_insert->run;
-}
-
-#----------------------------------------------------------#
-# worker
-#----------------------------------------------------------#
 my $worker_count = sub {
     my $job    = shift;
     my @aligns = @$job;
@@ -245,6 +234,27 @@ my $worker_count = sub {
 #----------------------------------------------------------#
 # start update
 #----------------------------------------------------------#
+if ( $run eq "all" or $run eq "insert" ) {
+    my $mongo = MongoDB::MongoClient->new(
+        host          => $server,
+        port          => $port,
+        query_timeout => -1,
+    );
+    my $db       = $mongo->get_database($dbname);
+    my $coll_bed = $db->get_collection('bed');
+
+    $coll_bed->drop;
+    $coll_bed->ensure_index( { 'align_id'  => 1 } );
+    $coll_bed->ensure_index( { 'chr_name'  => 1 } );
+    $coll_bed->ensure_index( { 'chr_start' => 1 } );
+    $coll_bed->ensure_index( { 'chr_end'   => 1 } );
+
+    my $mce = MCE->new( max_workers => $parallel, );
+    $mce->foreach( \@files, $worker_insert, )
+        ;    # foreach implies chunk_size => 1.
+
+}
+
 if ( $run eq "all" or $run eq "count" ) {
     my $mongo = MongoDB::MongoClient->new(
         host          => $server,
@@ -253,21 +263,12 @@ if ( $run eq "all" or $run eq "count" ) {
     );
     my $db = $mongo->get_database($dbname);
 
-    my $coll    = $db->get_collection('align');
-    my @objects = $coll->find->all;
+    my $coll   = $db->get_collection('align');
+    my @aligns = $coll->find->all;
 
-    my @jobs;
-    while ( scalar @objects ) {
-        my @batching = splice @objects, 0, $batch_number;
-        push @jobs, [@batching];
-    }
-
-    my $run_count = AlignDB::Run->new(
-        parallel => $parallel,
-        jobs     => \@jobs,
-        code     => $worker_count,
-    );
-    $run_count->run;
+    my $mce
+        = MCE->new( max_workers => $parallel, chunk_size => $batch_number, );
+    $mce->forchunk( \@aligns, $worker_count, );
 
     $stopwatch->block_message( check( $db, 'gsw',   'bed_count' ) );
     $stopwatch->block_message( check( $db, 'ofgsw', 'bed_count' ) );
@@ -341,7 +342,7 @@ __END__
 
 =head1 NAME
 
-    count_bed.pl - Add annotation info to alignDB
+count_bed.pl - Add bed files to bed and count intersections.
 
 =head1 SYNOPSIS
 
