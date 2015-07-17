@@ -1,6 +1,7 @@
 #!/usr/bin/perl
 use strict;
 use warnings;
+use autodie;
 
 use Getopt::Long;
 use Pod::Usage;
@@ -16,30 +17,33 @@ $MongoDB::BSON::looks_like_number = 1;
 $MongoDB::BSON::utf8_flag_on      = 0;
 use MongoDB::OID;
 
+use MCE;
+
+use AlignDB::GC;
 use AlignDB::IntSpan;
-use AlignDB::Run;
 use AlignDB::Window;
 use AlignDB::Stopwatch;
 use AlignDB::Util qw(:all);
 
 use FindBin;
-use lib "$FindBin::Bin/../lib";
-use AlignDB;
-use AlignDB::GC;
 
 #----------------------------------------------------------#
 # GetOpt section
 #----------------------------------------------------------#
 my $Config = Config::Tiny->new;
-$Config = Config::Tiny->read("$FindBin::Bin/../alignDB.ini");
+$Config = Config::Tiny->read("$FindBin::Bin/config.ini");
 
 # record ARGV and Config
-my $stopwatch = AlignDB::Stopwatch->new;
+my $stopwatch = AlignDB::Stopwatch->new(
+    program_name => $0,
+    program_argv => [@ARGV],
+    program_conf => $Config,
+);
 
 # Database init values
-my $server = "localhost";
-my $port   = 27017;
-my $dbname = "alignDB";
+my $server = $Config->{database}{server};
+my $port   = $Config->{database}{port};
+my $dbname = $Config->{database}{db};
 
 my @tags;
 my @types;
@@ -90,10 +94,18 @@ pod2usage( -exitstatus => 0, -verbose => 2 ) if $man;
 $stopwatch->start_message("Insert bed to $dbname...");
 
 #----------------------------------------------------------#
-# read data
+# workers
 #----------------------------------------------------------#
 my $worker_insert = sub {
-    my $job = shift;
+    my ( $self, $chunk_ref, $chunk_id ) = @_;
+    my $job = $chunk_ref->[0];
+
+    #print Dump $chunk_ref;
+
+    my $wid = MCE->wid;
+
+    my $inner_watch = AlignDB::Stopwatch->new;
+    $inner_watch->block_message("* Process task [$chunk_id] by worker #$wid");
 
     my ( $file, $tag, $type ) = @$job;
     print "Reading file [$file]\n";
@@ -172,45 +184,14 @@ my $worker_insert = sub {
     print "Insert done.\n";
 };
 
-{
-    my $mongo = MongoDB::MongoClient->new(
-        host          => $server,
-        port          => $port,
-        query_timeout => -1,
-    );
-    my $db       = $mongo->get_database($dbname);
-    my $coll_ofg = $db->get_collection('ofg');
-    $coll_ofg->drop;
-
-    my @args = zip @files, @tags, @types;
-    my @jobs;
-    while ( scalar @args ) {
-        my @batching = splice @args, 0, 3;
-        push @jobs, [@batching];
-    }
-
-    my $run_insert = AlignDB::Run->new(
-        parallel => $parallel,
-        jobs     => \@jobs,
-        code     => $worker_insert,
-    );
-    $run_insert->run;
-
-    $stopwatch->block_message("Add index to collection ofg");
-    $coll_ofg->ensure_index( { 'align_id'  => 1 } );
-    $coll_ofg->ensure_index( { 'chr_name'  => 1 } );
-    $coll_ofg->ensure_index( { 'chr_start' => 1 } );
-    $coll_ofg->ensure_index( { 'chr_end'   => 1 } );
-    $coll_ofg->ensure_index( { 'tag'       => 1 } );
-    $coll_ofg->ensure_index( { 'type'      => 1 } );
-}
-
-#----------------------------------------------------------#
-# worker
-#----------------------------------------------------------#
 my $worker_sw = sub {
-    my $job    = shift;
-    my @aligns = @$job;
+    my ( $self, $chunk_ref, $chunk_id ) = @_;
+    my @aligns = @{$chunk_ref};
+
+    my $wid = MCE->wid;
+
+    my $inner_watch = AlignDB::Stopwatch->new;
+    $inner_watch->block_message("* Process task [$chunk_id] by worker #$wid");
 
     # wait forever for responses
     my $mongo = MongoDB::MongoClient->new(
@@ -224,10 +205,8 @@ my $worker_sw = sub {
     my $coll_ofg   = $db->get_collection('ofg');
     my $coll_ofgsw = $db->get_collection('ofgsw');
 
-    # mocking AlignDB::GC
-    my $obj = AlignDB->new( mocking => 1, );
-    AlignDB::GC->meta->apply($obj);
-    my %opt = (
+    # AlignDB::GC
+    my $obj = AlignDB::GC->new(
         wave_window_size => $wave_window_size,
         wave_window_step => $wave_window_step,
         vicinal_size     => $vicinal_size,
@@ -237,9 +216,6 @@ my $worker_sw = sub {
         stat_window_step => $stat_window_step,
         skip_mdcw        => 1,
     );
-    for my $key ( sort keys %opt ) {
-        $obj->$key( $opt{$key} );
-    }
 
     for my $align (@aligns) {
         my $chr_name  = $align->{chr_name};
@@ -329,6 +305,37 @@ my $worker_sw = sub {
 #----------------------------------------------------------#
 # start update
 #----------------------------------------------------------#
+# insert bed files
+{
+    my $mongo = MongoDB::MongoClient->new(
+        host          => $server,
+        port          => $port,
+        query_timeout => -1,
+    );
+    my $db       = $mongo->get_database($dbname);
+    my $coll_ofg = $db->get_collection('ofg');
+    $coll_ofg->drop;
+
+    my @args = zip @files, @tags, @types;
+    my @jobs;
+    while ( scalar @args ) {
+        my @batching = splice @args, 0, 3;
+        push @jobs, [@batching];
+    }
+
+    my $mce = MCE->new( max_workers => $parallel, );
+    $mce->foreach( \@jobs, $worker_insert, ); # foreach implies chunk_size => 1.
+
+    $stopwatch->block_message("Add index to collection ofg");
+    $coll_ofg->ensure_index( { 'align_id'  => 1 } );
+    $coll_ofg->ensure_index( { 'chr_name'  => 1 } );
+    $coll_ofg->ensure_index( { 'chr_start' => 1 } );
+    $coll_ofg->ensure_index( { 'chr_end'   => 1 } );
+    $coll_ofg->ensure_index( { 'tag'       => 1 } );
+    $coll_ofg->ensure_index( { 'type'      => 1 } );
+}
+
+# ofgsw
 {
     my $mongo = MongoDB::MongoClient->new(
         host          => $server,
@@ -339,13 +346,7 @@ my $worker_sw = sub {
 
     my $coll = $db->get_collection('align');
 
-    my @objects = $coll->find->all;
-
-    my @jobs;
-    while ( scalar @objects ) {
-        my @batching = splice @objects, 0, $batch_number;
-        push @jobs, [@batching];
-    }
+    my @jobs = $coll->find->all;
 
     my $coll_ofgsw = $db->get_collection('ofgsw');
     $coll_ofgsw->drop;
@@ -359,12 +360,9 @@ my $worker_sw = sub {
     $coll_ofgsw->ensure_index( { 'ofg.tag'   => 1 } );
     $coll_ofgsw->ensure_index( { 'ofg.type'  => 1 } );
 
-    my $run = AlignDB::Run->new(
-        parallel => $parallel,
-        jobs     => \@jobs,
-        code     => $worker_sw,
-    );
-    $run->run;
+    my $mce
+        = MCE->new( max_workers => $parallel, chunk_size => $batch_number, );
+    $mce->forchunk( \@jobs, $worker_sw, );
 
 =head1 shell indexing
     ~/share/mongodb/bin/mongo Human_GC --eval "db.ofgsw.ensureIndex( { align_id: 1 }, {background: true} );" 
@@ -415,23 +413,12 @@ __END__
 
 =head1 NAME
 
-    insert_bed_mg.pl - Add annotation info to alignDB
+insert_bed.pl - Add bed files to ofg and generate ofgsw.
 
 =head1 SYNOPSIS
 
-perl mg/init_mg.pl -d alignDB
-perl mg/gen_mg.pl -d alignDB -t "4932,S288C" --dir ~/data/alignment/self_alignment/S288C  --parallel 1
-perl mg/insert_mg_bed.pl -d alignDB --tag hot --type hot -f ~/Scripts/alignDB/ofg/spo11/spo11_hot.bed --batch 10 --parallel 1
-
-# Human
-~/share/mongodb/bin/mongo --eval "db.dropDatabase()" Human_FaireSeq
-~/share/mongodb/bin/mongorestore ~/data/mongodb/Human --db Human_FaireSeq
-
-perl mg/insert_mg_bed.pl -d alignDB --tag hot --type hot -f ~/Scripts/alignDB/ofg/spo11/spo11_hot.bed --batch 10 --parallel 1
-
-perl mg/init_mg.pl -d Ath
-perl mg/gen_mg.pl -d Ath -t "3702,Ath" --dir /home/wangq/data/alignment/arabidopsis19/ath_65 --length 500000 --parallel 8
-perl mg/insert_mg_bed.pl -d Ath --batch 10 --parallel 4 \
-    --tag tdna --type SAIL -f ~/data/salk/process/ath/T-DNA.SAIL.bed 
+    mongo S288c --eval "db.dropDatabase();"
+    perl gen_mg.pl -d S288c -n S288c --dir ~/data/alignment/yeast_combine/S288C  --parallel 1
+    perl insert_mg_bed.pl -d alignDB --tag hot --type hot -f ~/Scripts/alignDB/ofg/spo11/spo11_hot.bed --batch 10 --parallel 1
 
 =cut
