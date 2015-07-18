@@ -139,7 +139,7 @@ my $worker = sub {
     my $coll_seq = $db->get_collection('sequence');
 
     # mocking AlignDB::GC
-    my $obj = AlignDB::GC->new(
+    my $obj_gc = AlignDB::GC->new(
         wave_window_size => $wave_window_size,
         wave_window_step => $wave_window_step,
         vicinal_size     => $vicinal_size,
@@ -159,10 +159,10 @@ my $worker = sub {
         my $seq = $coll_seq->find_one( { _id => $align->{seq_id} } )->{seq};
 
         print "    Insert gc extremes\n";
-        insert_extreme( $obj, $db, $align, $seq );
+        insert_extreme( $obj_gc, $db, $align, $seq );
 
         print "    Insert gc sliding windows\n";
-        insert_gsw( $obj, $db, $align, $seq );
+        insert_gsw( $obj_gc, $db, $align, $seq );
     }
 
     $inner_watch->block_message( "* Task [$chunk_id] has been processed.",
@@ -182,14 +182,14 @@ $stopwatch->end_message;
 exit;
 
 sub insert_extreme {
-    my $obj   = shift;
-    my $db    = shift;
-    my $align = shift;
-    my $seq   = shift;
+    my $obj_gc = shift;
+    my $db     = shift;
+    my $align  = shift;
+    my $seq    = shift;
 
     my $comparable_set = AlignDB::IntSpan->new( "1-" . $align->{length} );
     my @extreme_site;
-    my @slidings = $obj->gc_wave( [$seq], $comparable_set );
+    my @slidings = $obj_gc->gc_wave( [$seq], $comparable_set );
     for my $s (@slidings) {
         my $flag = $s->{high_low_flag};
 
@@ -202,7 +202,7 @@ sub insert_extreme {
     }
 
     # get extreme sliding windows' sizes
-    my $windows_size = $obj->wave_window_size;
+    my $windows_size = $obj_gc->wave_window_size;
     my $half_length  = int( $windows_size / 2 );
 
     # left
@@ -270,10 +270,10 @@ sub insert_extreme {
 }
 
 sub insert_gsw {
-    my $obj   = shift;
-    my $db    = shift;
-    my $align = shift;
-    my $seq   = shift;
+    my $obj_gc = shift;
+    my $db     = shift;
+    my $align  = shift;
+    my $seq    = shift;
 
     my $comparable_set = AlignDB::IntSpan->new( "1-" . $align->{length} );
 
@@ -281,7 +281,7 @@ sub insert_gsw {
     my $coll_gsw     = $db->get_collection('gsw');
 
     # get gc sliding windows' sizes
-    my $gsw_size = $obj->gsw_size;
+    my $gsw_size = $obj_gc->gsw_size;
 
     my @extremes = $coll_extreme->find( { align_id => $align->{_id} } )->all;
     for my $ex (@extremes) {
@@ -416,7 +416,7 @@ sub insert_gsw {
                 }
                 else {
                     my ( $gc_mean, $gc_std, $gc_cv, $gc_mdcw )
-                        = $obj->segment_gc_stat( [$seq], $resize_set );
+                        = $obj_gc->segment_gc_stat( [$seq], $resize_set );
                     $gsw->{gc_mean} = $gc_mean;
                     $gsw->{gc_cv}   = $gc_cv;
                     $gsw->{gc_std}  = $gc_std;
@@ -435,7 +435,7 @@ __END__
 
 =head1 NAME
 
-insert_mg_gcwave.pl - Add GC ralated tables to alignDB
+insert_gcwave.pl - Add GC ralated tables to alignDB
 
 =head1 SYNOPSIS
 
