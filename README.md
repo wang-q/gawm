@@ -3,6 +3,7 @@
 ## Start mongod
 
 ```bash
+# rm ~/share/mongodb/data/mongod.lock
 numactl --interleave=all ~/share/mongodb/bin/mongod --config ~/share/mongodb/mongod.cnf
 ```
 
