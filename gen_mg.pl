@@ -3,11 +3,11 @@ use strict;
 use warnings;
 use autodie;
 
-use Getopt::Long;
-use Pod::Usage;
+use Getopt::Long qw(HelpMessage);
 use Config::Tiny;
 use YAML qw(Dump Load DumpFile LoadFile);
 
+use MCE;
 use File::Find::Rule;
 use Path::Tiny;
 use Text::CSV_XS;
@@ -16,8 +16,6 @@ use MongoDB;
 $MongoDB::BSON::looks_like_number = 1;
 $MongoDB::BSON::utf8_flag_on      = 0;
 use MongoDB::OID;
-
-use MCE;
 
 use AlignDB::IntSpan;
 use AlignDB::Stopwatch;
@@ -37,46 +35,54 @@ my $stopwatch = AlignDB::Stopwatch->new(
     program_conf => $Config,
 );
 
-# Database init values
-my $server = $Config->{database}{server};
-my $port   = $Config->{database}{port};
-my $dbname = $Config->{database}{db};
+=head1 NAME
 
-# dir
-my $dir;
+gen_mg.pl - Generate database from fasta files
 
-my $size_file;
-my $common_name;
+=head1 SYNOPSIS
 
-# mongodb has write lock, so we should make perl busy
-my $truncated_length = 500_000;
+    perl gen_mg.pl -D <directory> [options]
+      Options:
+        --help      -?          brief help message
+        --server    -s  STR     MongoDB server IP/Domain name
+        --port      -P  INT     MongoDB server port
+        --db        -d  STR     database name
+        --dir       -D  STR     genome files' directory
+        --size      -s  STR     chr.sizes
+        --name      -n  STR     common name
+        --length        INT     MongoDB has write lock, so we break genome into
+                                pieces and make perl busy
+        --fill          INT
+        --min           INT
+        --parallel  -p  INT     run in parallel mode
 
-my $fill       = 50;
-my $min_length = 5000;
+    cd ~/Script/gawm
+    mongo S288c --eval "db.dropDatabase();"
+    perl gen_mg.pl -d S288c --dir ~/data/alignment/yeast_combine/S288C --name S288c --parallel 1
 
-# run in parallel mode
-my $parallel = 1;
+    cd ~/Script/alignDB
+    perl init/init_alignDB.pl -d S288Cvsself
+    perl init/gen_alignDB_genome.pl -d S288Cvsself -t "4932,S288C" --dir /home/wangq/data/alignment/yeast65/S288C/  --parallel 4
+    perl init/insert_gc.pl -d S288Cvsself --parallel 4
 
-my $man  = 0;
-my $help = 0;
+=cut
 
 GetOptions(
-    'help|?'     => \$help,
-    'man'        => \$man,
-    's|server=s' => \$server,
-    'P|port=i'   => \$port,
-    'd|db=s'     => \$dbname,
-    'dir=s'      => \$dir,
-    's|size=s'   => \$size_file,
-    'n|name=s'   => \$common_name,
-    'length=i'   => \$truncated_length,
-    'fill=i'     => \$fill,
-    'min=i'      => \$min_length,
-    'parallel=i' => \$parallel,
-) or pod2usage(2);
+    'help|?' => sub { HelpMessage(0) },
+    's|server=s'   => \( my $server           = $Config->{database}{server} ),
+    'P|port=i'     => \( my $port             = $Config->{database}{port} ),
+    'd|db=s'       => \( my $dbname           = $Config->{database}{db} ),
+    'D|dir=s'      => \( my $dir ),
+    's|size=s'     => \( my $size_file ),
+    'n|name=s'     => \( my $common_name ),
+    'length=i'     => \( my $truncated_length = 500_000 ),
+    'fill=i'       => \( my $fill             = 50 ),
+    'min=i'        => \( my $min_length       = 5000 ),
+    'p|parallel=i' => \( my $parallel         = 1 ),
+) or HelpMessage(1);
 
-pod2usage(1) if $help;
-pod2usage( -exitstatus => 0, -verbose => 2 ) if $man;
+# die unless we got the mandatory argument
+HelpMessage(1) unless defined $dir;
 
 #----------------------------------------------------------#
 # Search for size and fasta files
@@ -94,12 +100,11 @@ elsif ( !-e $size_file ) {
     die "--size chr.sizes doesn't exist\n";
 }
 
-if (!defined $common_name) {
+if ( !defined $common_name ) {
     $common_name = path($dir)->basename;
 }
 
-my @files
-    = sort File::Find::Rule->file->name( '*.fa', '*.fas', '*.fasta' )->in($dir);
+my @files = sort File::Find::Rule->file->name( '*.fa', '*.fas', '*.fasta' )->in($dir);
 printf "\n----Total .fa Files: %4s----\n\n", scalar @files;
 
 {
@@ -132,8 +137,7 @@ printf "\n----Total .fa Files: %4s----\n\n", scalar @files;
 
     $coll_chr->ensure_index( { 'chr_name' => 1 } );
 
-    print
-        "There are @{[$coll_chr->count]} documents in collection chromosome\n";
+    print "There are @{[$coll_chr->count]} documents in collection chromosome\n";
 }
 
 #----------------------------------------------------------#
@@ -146,8 +150,7 @@ my $worker = sub {
     my $wid = MCE->wid;
 
     my $inner_watch = AlignDB::Stopwatch->new;
-    $inner_watch->block_message(
-        "* Process task [$chunk_id] by worker #$wid\n* File [$infile]...");
+    $inner_watch->block_message("* Process task [$chunk_id] by worker #$wid\n* File [$infile]...");
 
     my $db = MongoDB::MongoClient->new(
         host          => $server,
@@ -162,9 +165,7 @@ my $worker = sub {
 
     # find chromosome OID
     my $coll_chr = $db->get_collection('chromosome');
-    my $chr_id
-        = $coll_chr->find_one(
-        { 'common_name' => $common_name, 'chr_name' => $chr_name } );
+    my $chr_id = $coll_chr->find_one( { 'common_name' => $common_name, 'chr_name' => $chr_name } );
     return unless $chr_id;
     $chr_id = $chr_id->{_id};
 
@@ -176,17 +177,15 @@ my $worker = sub {
         }
     }
 
-    print "Ambiguous chromosome region for $chr_name:\n    "
-        . $ambiguous_set->runlist . "\n";
+    print "Ambiguous chromosome region for $chr_name:\n    " . $ambiguous_set->runlist . "\n";
 
     my $valid_set = AlignDB::IntSpan->new("1-$chr_length");
     $valid_set->subtract($ambiguous_set);
-    $valid_set = $valid_set->fill( $fill - 1 );   # fill gaps smaller than $fill
+    $valid_set = $valid_set->fill( $fill - 1 );    # fill gaps smaller than $fill
 
-    print "Valid chromosome region for $chr_name:\n    "
-        . $valid_set->runlist . "\n";
+    print "Valid chromosome region for $chr_name:\n    " . $valid_set->runlist . "\n";
 
-    my @regions;    # ([start, end], [start, end], ...)
+    my @regions;                                   # ([start, end], [start, end], ...)
     for my $set ( $valid_set->sets ) {
         my $size = $set->size;
         next if $size < $min_length;
@@ -280,35 +279,3 @@ $stopwatch->end_message( "All files have been processed.", "duration" );
 exit;
 
 __END__
-
-=head1 NAME
-
-gen_mg.pl - Generate database from fasta files
-
-=head1 SYNOPSIS
-
-    perl gen_mg.pl [options]
-      Options:
-        --help              brief help message
-        --man               full documentation
-        --server  -s        MongoDB server IP/Domain name
-        --port    -P        MongoDB server port
-        --db      -d        database name
-        --dir               genome files' directory
-        --size    -s        chr.sizes
-        --name    -n        common name
-        --length
-        --fill
-        --min
-        --parallel          run in parallel mode
-
-    cd ~/Script/alignDB
-    perl init/init_alignDB.pl -d S288Cvsself
-    perl init/gen_alignDB_genome.pl -d S288Cvsself -t "4932,S288C" --dir /home/wangq/data/alignment/yeast65/S288C/  --parallel 4
-    perl init/insert_gc.pl -d S288Cvsself --parallel 4
-    
-    cd ~/Script/gawm
-    mongo S288c --eval "db.dropDatabase();"
-    perl gen_mg.pl -d S288c --dir ~/data/alignment/yeast_combine/S288C --name S288c --parallel 1
-
-=cut
