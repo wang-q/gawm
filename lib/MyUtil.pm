@@ -16,23 +16,12 @@ use vars qw(@ISA @EXPORT_OK %EXPORT_TAGS);
 %EXPORT_TAGS = (
     all => [
         qw{
-            replace_home center_resize check_coll
+            center_resize check_coll
             },
     ],
 );
 
 @EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
-
-sub replace_home {
-    my $path = shift;
-
-    if ( $path =~ /^\~\// ) {
-        $path =~ s/^\~\///;
-        $path = File::Spec->catdir( File::HomeDir->my_home, $path );
-    }
-
-    return $path;
-}
 
 sub center_resize {
     my $old_set    = shift;
@@ -74,8 +63,6 @@ sub check_coll {
 
     return "For collection [$name], check field [$field]:\n"
         . "    Total $total\n    Exists $exists\n    Non exists $non_exists\n";
-
 }
-
 
 1;
