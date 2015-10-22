@@ -47,3 +47,26 @@ perl stat_mg.pl -d S288c_spo11 --by tag
 
 perl chart_mg.pl --replace ofg="DSBs" -i d:\wq\GC\autochart\131230_repli_insert\S288C_spo11.mg.xlsx
 ```
+
+## Prof GC wave
+
+```bash
+cd ~/Scripts/gawm
+
+# drop db if exists
+mongo S288c_prof --eval "db.dropDatabase();"
+
+# generate
+perl gen_mg.pl -d S288c_prof -n S288c --dir ~/data/alignment/yeast_combine/S288C/chrVII.fa --parallel 1
+
+# GC
+perl -d:NYTProf insert_gcwave.pl -d S288c_prof --batch 1 --parallel 4
+nytprofhtml --open
+
+# CV
+perl -d:NYTProf update_sw_cv.pl -d S288c_prof --batch 1 --parallel 4
+nytprofhtml --open
+
+# stats
+perl stat_mg.pl -d S288c_prof
+```

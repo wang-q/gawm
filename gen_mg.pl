@@ -18,9 +18,10 @@ use MongoDB::OID;
 
 use AlignDB::IntSpan;
 use AlignDB::Stopwatch;
-use AlignDB::Util qw(:all);
 
 use FindBin;
+use lib "$FindBin::RealBin/lib";
+use MyUtil qw(read_fasta check_coll);
 
 #----------------------------------------------------------#
 # GetOpt section
@@ -68,8 +69,8 @@ gen_mg.pl - Generate database from fasta files
 
 GetOptions(
     'help|?' => sub { HelpMessage(0) },
-    'server=s' => \( my $server           = $Config->{database}{server} ),
-    'port=i'   => \( my $port             = $Config->{database}{port} ),
+    'server=s'   => \( my $server           = $Config->{database}{server} ),
+    'port=i'     => \( my $port             = $Config->{database}{port} ),
     'db|d=s'     => \( my $dbname           = $Config->{database}{db} ),
     'dir=s'      => \( my $dir ),
     'size|s=s'   => \( my $size_file ),
@@ -96,30 +97,24 @@ $stopwatch->start_message("Generate database from fasta files");
         query_timeout => -1,
     )->get_database($dbname);
 
-    my $coll_chr = $db->get_collection('chromosome');
-    $coll_chr->drop;
-    $coll_chr->ensure_index( { 'chr_name' => 1 } );
-
-    my $coll_seq = $db->get_collection('sequence');
-    $coll_seq->drop;
-    $coll_seq->ensure_index( { 'chr_name'  => 1 } );
-    $coll_seq->ensure_index( { 'chr_start' => 1 } );
-    $coll_seq->ensure_index( { 'chr_end'   => 1 } );
-    $coll_seq->ensure_index( { 'level'     => 1 } );
-
-    my $coll_align = $db->get_collection('align');
-    $coll_align->drop;
-    $coll_align->ensure_index( { 'chr_name'  => 1 } );
-    $coll_align->ensure_index( { 'chr_start' => 1 } );
-    $coll_align->ensure_index( { 'chr_end'   => 1 } );
-    $coll_align->ensure_index( { 'seq_id'    => 1 } );
+    $db->get_collection('chromosome')->drop;
+    $db->get_collection('sequence')->drop;
+    $db->get_collection('align')->drop;
 }
 
 #----------------------------------------------------------#
 # Search for size and fasta files
 #----------------------------------------------------------#
+$stopwatch->block_message("Insert to chromosome");
+
 if ( !defined $size_file ) {
-    if ( path( $dir, 'chr.sizes' )->is_file ) {
+    if ( path($dir)->is_file ) {
+        if ( path($dir)->parent->child('chr.sizes')->is_file ) {
+            $size_file = path($dir)->parent->child('chr.sizes')->absolute->stringify;
+            printf "--size set to $size_file\n";
+        }
+    }
+    elsif ( path( $dir, 'chr.sizes' )->is_file ) {
         $size_file = path( $dir, 'chr.sizes' )->absolute->stringify;
         printf "--size set to $size_file\n";
     }
@@ -164,7 +159,7 @@ printf "\n----Total .fa Files: %4s----\n\n", scalar @files;
     }
     close $csv_fh;
 
-    $coll_chr->batch_insert( \@chrs, { safe => 1 }, );
+    $coll_chr->insert_many( \@chrs );
 
     print "There are @{[$coll_chr->count]} documents in collection chromosome\n";
 }
@@ -179,7 +174,7 @@ my $worker = sub {
     my $wid = MCE->wid;
 
     my $inner_watch = AlignDB::Stopwatch->new;
-    $inner_watch->block_message("* Process task [$chunk_id] by worker #$wid\n* File [$infile]...");
+    $inner_watch->block_message("Process task [$chunk_id] by worker #$wid\n    File [$infile]...");
 
     my $db = MongoDB::MongoClient->new(
         host          => $server,
@@ -205,16 +200,14 @@ my $worker = sub {
             $ambiguous_set->add( $pos + 1 );
         }
     }
-
-    print "Ambiguous chromosome region for $chr_name:\n    " . $ambiguous_set->runlist . "\n";
+    printf "    Ambiguous region for %s:\n        %s\n", $chr_name, $ambiguous_set->runlist;
 
     my $valid_set = AlignDB::IntSpan->new("1-$chr_length");
     $valid_set->subtract($ambiguous_set);
-    $valid_set = $valid_set->fill( $fill - 1 );   
+    $valid_set = $valid_set->fill( $fill - 1 );
+    printf "    Valid region for %s:\n        %s\n", $chr_name, $valid_set->runlist;
 
-    print "Valid chromosome region for $chr_name:\n    " . $valid_set->runlist . "\n";
-
-    my @regions;                                   # ([start, end], [start, end], ...)
+    my @regions;    # ([start, end], [start, end], ...)
     for my $set ( $valid_set->sets ) {
         my $size = $set->size;
         next if $size < $min_length;
@@ -257,7 +250,7 @@ my $worker = sub {
             runlist     => $runlist,
             level       => 1,              # top level
         };
-        my $seq_id = $coll_seq->insert($data_seq);
+        my $seq_id = $coll_seq->insert_one($data_seq)->inserted_id;
 
         my $data_align = {
             chr_name   => $chr_name,
@@ -268,7 +261,7 @@ my $worker = sub {
             runlist    => $runlist,
             seq_id     => $seq_id,
         };
-        $coll_align->insert($data_align);
+        $coll_align->insert_one($data_align);
     }
 
     $inner_watch->block_message( "$infile has been processed.", "duration" );
@@ -281,6 +274,47 @@ my $worker = sub {
 #----------------------------------------------------------#
 my $mce = MCE->new( max_workers => $parallel, );
 $mce->foreach( \@files, $worker, );    # foreach implies chunk_size => 1.
+
+#----------------------------#
+# index and check
+#----------------------------#
+{
+    my $db = MongoDB::MongoClient->new(
+        host          => $server,
+        port          => $port,
+        query_timeout => -1,
+    )->get_database($dbname);
+
+    {
+        my $name = "chromosome";
+        $stopwatch->block_message("Indexing $name");
+        my $coll    = $db->get_collection($name);
+        my $indexes = $coll->indexes;
+        $indexes->create_one( [ common_name => 1, chr_name => 1 ], { unique => 1 } );
+    }
+
+    {
+        my $name = "sequence";
+        $stopwatch->block_message("Indexing $name");
+        my $coll    = $db->get_collection($name);
+        my $indexes = $coll->indexes;
+        $indexes->create_one( [ chr_name => 1, chr_start => 1, chr_end => 1 ] );
+        $indexes->create_one( [ level => 1 ] );
+    }
+
+    {
+        my $name = "align";
+        $stopwatch->block_message("Indexing $name");
+        my $coll    = $db->get_collection($name);
+        my $indexes = $coll->indexes;
+        $indexes->create_one( [ chr_name => 1, chr_start => 1, chr_end => 1 ] );
+        $indexes->create_one( [ seq_id => 1 ] );
+    }
+
+    $stopwatch->block_message( check_coll( $db, 'chromosome', '_id' ) );
+    $stopwatch->block_message( check_coll( $db, 'sequence',   '_id' ) );
+    $stopwatch->block_message( check_coll( $db, 'align',      '_id' ) );
+}
 
 $stopwatch->end_message( "All files have been processed.", "duration" );
 

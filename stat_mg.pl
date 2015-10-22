@@ -3,14 +3,12 @@ use strict;
 use warnings;
 use autodie;
 
-use Getopt::Long;
-use Pod::Usage;
+use Getopt::Long qw(HelpMessage);
 use Config::Tiny;
 use YAML qw(Dump Load DumpFile LoadFile);
 
 use MongoDB;
 $MongoDB::BSON::looks_like_number = 1;
-$MongoDB::BSON::utf8_flag_on      = 0;
 use MongoDB::OID;
 
 use AlignDB::IntSpan;
@@ -31,29 +29,31 @@ my $stopwatch = AlignDB::Stopwatch->new(
     program_conf => $Config,
 );
 
-# Database init values
-my $server = $Config->{database}{server};
-my $port   = $Config->{database}{port};
-my $dbname = $Config->{database}{db};
+=head1 NAME
 
-my $outfile;
-my $by = "tag";    # "type" or "tt"
+stat_mg.pl - Do stats 
 
-my $man  = 0;
-my $help = 0;
+=head1 SYNOPSIS
+
+    perl stat_mg.pl [options]
+      Options:
+        --help      -?          brief help message
+        --server        STR     MongoDB server IP/Domain name
+        --port          INT     MongoDB server port
+        --db        -d  STR     database name
+        --output    -o  STR     output filename, default is [db.mg.xlsx]
+        --by                    tag, type or tt, default is [tag]
+
+=cut
 
 GetOptions(
-    'help|?'     => \$help,
-    'man'        => \$man,
-    's|server=s' => \$server,
-    'P|port=i'   => \$port,
-    'd|db=s'     => \$dbname,
-    'o|output=s' => \$outfile,
-    'by=s'       => \$by,
-) or pod2usage(2);
-
-pod2usage(1) if $help;
-pod2usage( -exitstatus => 0, -verbose => 2 ) if $man;
+    'help|?' => sub { HelpMessage(0) },
+    'server=s' => \( my $server = $Config->{database}{server} ),
+    'port=i'   => \( my $port   = $Config->{database}{port} ),
+    'db|d=s'   => \( my $dbname = $Config->{database}{db} ),
+    'output|o=i' => \( my $outfile ),
+    'by=i'       => \( my $by = "tag" ),
+) or HelpMessage(1);
 
 $outfile = "$dbname.mg.xlsx" unless $outfile;
 
@@ -67,12 +67,11 @@ my $write_obj = AlignDB::ToXLSX->new(
     mocking => 1,
 );
 
-my $mongo = MongoDB::MongoClient->new(
+my $db = MongoDB::MongoClient->new(
     host          => $server,
     port          => $port,
     query_timeout => -1,
-);
-my $db = $mongo->get_database($dbname);
+)->get_database($dbname);
 
 #----------------------------------------------------------#
 # worksheet -- distance_to_trough
@@ -98,11 +97,10 @@ my $distance_to_trough = sub {
             sheet_col => $sheet_col,
             header    => \@headers,
         );
-        ( $sheet, $sheet_row )
-            = $write_obj->write_header_direct( $sheet_name, \%option );
+        ( $sheet, $sheet_row ) = $write_obj->write_header_direct( $sheet_name, \%option );
     }
 
-    my $result = $coll->aggregate(
+    my @docs = $coll->aggregate(
         [   { '$match' => { distance => { '$lte' => 20 } } },
             {   '$group' => {
                     '_id'       => '$distance',
@@ -114,12 +112,9 @@ my $distance_to_trough = sub {
             },
             { '$sort' => { _id => 1 } },
         ]
-    );
-    for ( @{$result} ) {
-        my @row = (
-            $_->{_id},     $_->{avg_gc}, $_->{avg_gc_cv},
-            $_->{avg_bed}, $_->{count},
-        );
+    )->all;
+    for (@docs) {
+        my @row = ( $_->{_id}, $_->{avg_gc}, $_->{avg_gc_cv}, $_->{avg_bed}, $_->{count}, );
         ($sheet_row) = $write_obj->write_row_direct(
             $sheet,
             {   row       => \@row,
@@ -156,11 +151,10 @@ my $distance_to_crest = sub {
             sheet_col => $sheet_col,
             header    => \@headers,
         );
-        ( $sheet, $sheet_row )
-            = $write_obj->write_header_direct( $sheet_name, \%option );
+        ( $sheet, $sheet_row ) = $write_obj->write_header_direct( $sheet_name, \%option );
     }
 
-    my $result = $coll->aggregate(
+    my @docs = $coll->aggregate(
         [   { '$match' => { distance_crest => { '$lte' => 20 } } },
             {   '$group' => {
                     '_id'       => '$distance_crest',
@@ -172,12 +166,9 @@ my $distance_to_crest = sub {
             },
             { '$sort' => { _id => 1 } },
         ]
-    );
-    for ( @{$result} ) {
-        my @row = (
-            $_->{_id},     $_->{avg_gc}, $_->{avg_gc_cv},
-            $_->{avg_bed}, $_->{count},
-        );
+    )->all;
+    for (@docs) {
+        my @row = ( $_->{_id}, $_->{avg_gc}, $_->{avg_gc_cv}, $_->{avg_bed}, $_->{count}, );
         ($sheet_row) = $write_obj->write_row_direct(
             $sheet,
             {   row       => \@row,
@@ -214,11 +205,10 @@ my $gradient = sub {
             sheet_col => $sheet_col,
             header    => \@headers,
         );
-        ( $sheet, $sheet_row )
-            = $write_obj->write_header_direct( $sheet_name, \%option );
+        ( $sheet, $sheet_row ) = $write_obj->write_header_direct( $sheet_name, \%option );
     }
 
-    my $result = $coll->aggregate(
+    my @docs = $coll->aggregate(
         [   { '$match' => { gradient => { '$gte' => 1 } } },
             {   '$group' => {
                     '_id'       => '$gradient',
@@ -230,12 +220,9 @@ my $gradient = sub {
             },
             { '$sort' => { _id => 1 } },
         ]
-    );
-    for ( @{$result} ) {
-        my @row = (
-            $_->{_id},     $_->{avg_gc}, $_->{avg_gc_cv},
-            $_->{avg_bed}, $_->{count},
-        );
+    )->all;
+    for (@docs) {
+        my @row = ( $_->{_id}, $_->{avg_gc}, $_->{avg_gc_cv}, $_->{avg_bed}, $_->{count}, );
         ($sheet_row) = $write_obj->write_row_direct(
             $sheet,
             {   row       => \@row,
@@ -272,11 +259,10 @@ my $ofg_all = sub {
             sheet_col => $sheet_col,
             header    => \@headers,
         );
-        ( $sheet, $sheet_row )
-            = $write_obj->write_header_direct( $sheet_name, \%option );
+        ( $sheet, $sheet_row ) = $write_obj->write_header_direct( $sheet_name, \%option );
     }
 
-    my $result = $coll->aggregate(
+    my @docs = $coll->aggregate(
         [   { '$match' => { distance => { '$lte' => 20 } } },
             {   '$group' => {
                     '_id'       => '$distance',
@@ -288,12 +274,9 @@ my $ofg_all = sub {
             },
             { '$sort' => { _id => 1 } },
         ]
-    );
-    for ( @{$result} ) {
-        my @row = (
-            $_->{_id},     $_->{avg_gc}, $_->{avg_gc_cv},
-            $_->{avg_bed}, $_->{count},
-        );
+    )->all;
+    for (@docs) {
+        my @row = ( $_->{_id}, $_->{avg_gc}, $_->{avg_gc_cv}, $_->{avg_bed}, $_->{count}, );
         ($sheet_row) = $write_obj->write_row_direct(
             $sheet,
             {   row       => \@row,
@@ -341,18 +324,15 @@ my $ofg_tag_type = sub {
                 sheet_col => $sheet_col,
                 header    => \@headers,
             );
-            ( $sheet, $sheet_row )
-                = $write_obj->write_header_direct( $sheet_name, \%option );
+            ( $sheet, $sheet_row ) = $write_obj->write_header_direct( $sheet_name, \%option );
         }
 
         my $condition;
         if ( $by eq "tag" ) {
-            $condition
-                = { "distance" => { '$lte' => 20 }, "ofg.tag" => $bind, };
+            $condition = { "distance" => { '$lte' => 20 }, "ofg.tag" => $bind, };
         }
         elsif ( $by eq "type" ) {
-            $condition
-                = { "distance" => { '$lte' => 20 }, "ofg.type" => $bind, };
+            $condition = { "distance" => { '$lte' => 20 }, "ofg.type" => $bind, };
         }
         elsif ( $by eq "tt" ) {
             my ( $tag, $type ) = split /\-/, $bind;
@@ -363,7 +343,7 @@ my $ofg_tag_type = sub {
             };
         }
 
-        my $result = $coll->aggregate(
+        my @docs = $coll->aggregate(
             [   { '$match' => $condition },
                 {   '$group' => {
                         '_id'       => '$distance',
@@ -375,12 +355,9 @@ my $ofg_tag_type = sub {
                 },
                 { '$sort' => { _id => 1 } },
             ]
-        );
-        for ( @{$result} ) {
-            my @row = (
-                $_->{_id},     $_->{avg_gc}, $_->{avg_gc_cv},
-                $_->{avg_bed}, $_->{count},
-            );
+        )->all;
+        for (@docs) {
+            my @row = ( $_->{_id}, $_->{avg_gc}, $_->{avg_gc_cv}, $_->{avg_bed}, $_->{count}, );
             ($sheet_row) = $write_obj->write_row_direct(
                 $sheet,
                 {   row       => \@row,
@@ -453,8 +430,8 @@ sub get_tts {
 
     my $coll = $db->get_collection('ofg');
 
-    my $result = $coll->aggregate(
-        [ { '$group' => { "_id" => { type => '$type', tag => '$tag' } } } ] );
+    my $result
+        = $coll->aggregate( [ { '$group' => { "_id" => { type => '$type', tag => '$tag' } } } ] );
 
     my @values;
     for ( @{$result} ) {

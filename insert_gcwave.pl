@@ -1,27 +1,24 @@
 #!/usr/bin/perl
 use strict;
 use warnings;
+use autodie;
 
-use Getopt::Long;
-use Pod::Usage;
+use Getopt::Long qw(HelpMessage);
 use Config::Tiny;
 use YAML qw(Dump Load DumpFile LoadFile);
 
+use MCE;
 use MongoDB;
 $MongoDB::BSON::looks_like_number = 1;
-$MongoDB::BSON::utf8_flag_on      = 0;
 use MongoDB::OID;
-
-use MCE;
 
 use AlignDB::GC;
 use AlignDB::IntSpan;
 use AlignDB::Stopwatch;
-use AlignDB::Util qw(:all);
 
 use FindBin;
-use lib "$FindBin::Bin/lib";
-use MyUtil qw(center_resize);
+use lib "$FindBin::RealBin/lib";
+use MyUtil qw(center_resize check_coll calc_gc_ratio);
 
 #----------------------------------------------------------#
 # GetOpt section
@@ -35,89 +32,78 @@ my $stopwatch = AlignDB::Stopwatch->new(
     program_conf => $Config,
 );
 
-# Database init values
-my $server = $Config->{database}{server};
-my $port   = $Config->{database}{port};
-my $dbname = $Config->{database}{db};
-
 # AlignDB::GC options
 my $wave_window_size  = $Config->{gc}{wave_window_size};
 my $wave_window_step  = $Config->{gc}{wave_window_step};
 my $vicinal_size      = $Config->{gc}{vicinal_size};
 my $fall_range        = $Config->{gc}{fall_range};
 my $gsw_size          = $Config->{gc}{gsw_size};
-my $stat_segment_size = 500;
+my $stat_segment_size = $Config->{gc}{stat_segment_size};
 my $stat_window_size  = $Config->{gc}{stat_window_size};
 my $stat_window_step  = $Config->{gc}{stat_window_step};
 
-# run in parallel mode
-my $parallel = 1;
+=head1 NAME
 
-# number of alignments process in one child process
-my $batch_number = 10;
+insert_gcwave.pl - Add GC ralated tables to alignDB
 
-my $man  = 0;
-my $help = 0;
+=head1 SYNOPSIS
+
+    perl insert_gcwave.pl [options]
+      Options:
+        --help      -?          brief help message
+        --server        STR     MongoDB server IP/Domain name
+        --port          INT     MongoDB server port
+        --db        -d  STR     database name
+        --parallel      INT     run in parallel mode, [1]
+        --batch         INT     number of alignments processed in one child
+                                process, [10]
+
+    # S288c
+    mongo S288c --eval "db.dropDatabase();"
+    
+    # Runtime 5 seconds.
+    perl gen_mg.pl -d S288c -n S288c --dir ~/data/alignment/yeast_combine/S288C  --parallel 1
+    
+    # Runtime 38 seconds.
+    perl insert_gcwave.pl -d S288c --batch 1 --parallel 4
+    
+    # Runtime 21 seconds.
+    perl update_sw_cv.pl -d S288c --batch 1 --parallel 4
+
+=cut
 
 GetOptions(
-    'help|?'     => \$help,
-    'man'        => \$man,
-    's|server=s' => \$server,
-    'P|port=i'   => \$port,
-    'd|db=s'     => \$dbname,
-    'parallel=i' => \$parallel,
-    'batch=i'    => \$batch_number,
-) or pod2usage(2);
-
-pod2usage(1) if $help;
-pod2usage( -exitstatus => 0, -verbose => 2 ) if $man;
+    'help|?' => sub { HelpMessage(0) },
+    'server=s'   => \( my $server       = $Config->{database}{server} ),
+    'port=i'     => \( my $port         = $Config->{database}{port} ),
+    'db|d=s'     => \( my $dbname       = $Config->{database}{db} ),
+    'parallel=i' => \( my $parallel     = 1 ),
+    'batch=i'    => \( my $batch_number = 10 ),
+) or HelpMessage(1);
 
 #----------------------------------------------------------#
-# init
+# Init
 #----------------------------------------------------------#
 $stopwatch->start_message("Update GC tables of $dbname...");
 
 # retrieve all _id from align
 my @jobs;
 {
-    my $mongo = MongoDB::MongoClient->new(
+    my $db = MongoDB::MongoClient->new(
         host          => $server,
         port          => $port,
         query_timeout => -1,
-    );
-    my $db = $mongo->get_database($dbname);
+    )->get_database($dbname);
 
-    my $coll = $db->get_collection('align');
-    @jobs = $coll->find->all;
-    printf "There are %d aligns totally.\n", scalar @jobs;
+    @jobs = $db->get_collection('align')->find->all;
+    printf "There are [%d] aligns totally.\n", scalar @jobs;
 
-    {
-        my $coll_extreme = $db->get_collection('extreme');
-        $coll_extreme->drop;
-        $coll_extreme->ensure_index( { 'align_id'  => 1 } );
-        $coll_extreme->ensure_index( { 'prev_id'   => 1 } );
-        $coll_extreme->ensure_index( { 'chr_name'  => 1 } );
-        $coll_extreme->ensure_index( { 'chr_start' => 1 } );
-        $coll_extreme->ensure_index( { 'chr_end'   => 1 } );
-        $coll_extreme->ensure_index( { 'type'      => 1 } );
-
-        my $coll_gsw = $db->get_collection('gsw');
-        $coll_gsw->drop;
-        $coll_gsw->ensure_index( { 'align_id'        => 1 } );
-        $coll_gsw->ensure_index( { 'extreme_id'      => 1 } );
-        $coll_gsw->ensure_index( { 'prev_extreme_id' => 1 } );
-        $coll_gsw->ensure_index( { 'chr_name'        => 1 } );
-        $coll_gsw->ensure_index( { 'chr_start'       => 1 } );
-        $coll_gsw->ensure_index( { 'chr_end'         => 1 } );
-        $coll_gsw->ensure_index( { 'type'            => 1 } );
-        $coll_gsw->ensure_index( { 'distance'        => 1 } );
-        $coll_gsw->ensure_index( { 'distance_crest'  => 1 } );
-        $coll_gsw->ensure_index( { 'gradient'        => 1 } );
-    }
+    $db->get_collection('extreme')->drop;
+    $db->get_collection('gsw')->drop;
 }
 
 #----------------------------------------------------------#
-# worker
+# Worker
 #----------------------------------------------------------#
 my $worker = sub {
     my ( $self, $chunk_ref, $chunk_id ) = @_;
@@ -126,15 +112,14 @@ my $worker = sub {
     my $wid = MCE->wid;
 
     my $inner_watch = AlignDB::Stopwatch->new;
-    $inner_watch->block_message("* Process task [$chunk_id] by worker #$wid");
+    $inner_watch->block_message("Process task [$chunk_id] by worker #$wid");
 
     # wait forever for responses
-    my $mongo = MongoDB::MongoClient->new(
+    my $db = MongoDB::MongoClient->new(
         host          => $server,
         port          => $port,
         query_timeout => -1,
-    );
-    my $db = $mongo->get_database($dbname);
+    )->get_database($dbname);
 
     my $coll_seq = $db->get_collection('sequence');
 
@@ -151,10 +136,7 @@ my $worker = sub {
     );
 
     for my $align (@aligns) {
-        my $chr_name  = $align->{chr_name};
-        my $chr_start = $align->{chr_start};
-        my $chr_end   = $align->{chr_end};
-        printf "Process align %s:%s-%s\n", $chr_name, $chr_start, $chr_end;
+        printf "Process align %s:%s-%s\n", $align->{chr_name}, $align->{chr_start}, $align->{chr_end};
 
         my $seq = $coll_seq->find_one( { _id => $align->{seq_id} } )->{seq};
 
@@ -165,8 +147,7 @@ my $worker = sub {
         insert_gsw( $obj_gc, $db, $align, $seq );
     }
 
-    $inner_watch->block_message( "* Task [$chunk_id] has been processed.",
-        "duration" );
+    $inner_watch->block_message( "Task [$chunk_id] has been processed.", "duration" );
 
     return;
 };
@@ -177,10 +158,53 @@ my $worker = sub {
 my $mce = MCE->new( max_workers => $parallel, chunk_size => $batch_number, );
 $mce->forchunk( \@jobs, $worker, );
 
+#----------------------------#
+# index and check
+#----------------------------#
+{
+    my $db = MongoDB::MongoClient->new(
+        host          => $server,
+        port          => $port,
+        query_timeout => -1,
+    )->get_database($dbname);
+
+    {
+        my $name = "extreme";
+        $stopwatch->block_message("Indexing $name");
+        my $coll    = $db->get_collection($name);
+        my $indexes = $coll->indexes;
+        $indexes->create_one( [ align_id => 1 ] );
+        $indexes->create_one( [ prev_id  => 1 ] );
+        $indexes->create_one( [ chr_name => 1, chr_start => 1, chr_end => 1 ] );
+        $indexes->create_one( [ type     => 1 ] );
+    }
+
+    {
+        my $name = "gsw";
+        $stopwatch->block_message("Indexing $name");
+        my $coll    = $db->get_collection($name);
+        my $indexes = $coll->indexes;
+        $indexes->create_one( [ align_id        => 1 ] );
+        $indexes->create_one( [ extreme_id      => 1 ] );
+        $indexes->create_one( [ prev_extreme_id => 1 ] );
+        $indexes->create_one( [ chr_name        => 1, chr_start => 1, chr_end => 1 ] );
+        $indexes->create_one( [ type            => 1 ] );
+        $indexes->create_one( [ distance        => 1 ] );
+        $indexes->create_one( [ distance_crest  => 1 ] );
+        $indexes->create_one( [ gradient        => 1 ] );
+    }
+
+    $stopwatch->block_message( check_coll( $db, 'extreme', '_id' ) );
+    $stopwatch->block_message( check_coll( $db, 'gsw',     '_id' ) );
+}
+
 $stopwatch->end_message;
 
 exit;
 
+#----------------------------------------------------------#
+# Subroutines
+#----------------------------------------------------------#
 sub insert_extreme {
     my $obj_gc = shift;
     my $db     = shift;
@@ -211,12 +235,10 @@ sub insert_extreme {
     for ( my $i = 0; $i < scalar @extreme_site; $i++ ) {
 
         # wave_length
-        my $extreme_set         = $extreme_site[$i]->{set};
-        my $extreme_middle_left = $extreme_set->at($half_length);
-        my $extreme_middle_left_idx
-            = $comparable_set->index($extreme_middle_left);
-        my $left_wave_length
-            = $extreme_middle_left_idx - $prev_extreme_middle_right_idx + 1;
+        my $extreme_set             = $extreme_site[$i]->{set};
+        my $extreme_middle_left     = $extreme_set->at($half_length);
+        my $extreme_middle_left_idx = $comparable_set->index($extreme_middle_left);
+        my $left_wave_length        = $extreme_middle_left_idx - $prev_extreme_middle_right_idx + 1;
         $prev_extreme_middle_right_idx = $extreme_middle_left_idx + 1;
         $extreme_site[$i]->{left_wave_length} = $left_wave_length;
 
@@ -233,12 +255,10 @@ sub insert_extreme {
     for ( my $i = scalar @extreme_site - 1; $i >= 0; $i-- ) {
 
         # wave_length
-        my $extreme_set          = $extreme_site[$i]->{set};
-        my $extreme_middle_right = $extreme_set->at( $half_length + 1 );
-        my $extreme_middle_right_idx
-            = $comparable_set->index($extreme_middle_right);
-        my $right_wave_length
-            = $next_extreme_middle_left_idx - $extreme_middle_right_idx + 1;
+        my $extreme_set              = $extreme_site[$i]->{set};
+        my $extreme_middle_right     = $extreme_set->at( $half_length + 1 );
+        my $extreme_middle_right_idx = $comparable_set->index($extreme_middle_right);
+        my $right_wave_length = $next_extreme_middle_left_idx - $extreme_middle_right_idx + 1;
         $next_extreme_middle_left_idx = $extreme_middle_right_idx - 1;
         $extreme_site[$i]->{right_wave_length} = $right_wave_length;
 
@@ -263,7 +283,7 @@ sub insert_extreme {
         $ex->{align_id} = $align->{_id};
 
         $ex->{prev_id} = $prev_extreme_id;
-        $prev_extreme_id = $coll_extreme->insert( $ex, { safe => 1 } );
+        $prev_extreme_id = $coll_extreme->insert_one($ex)->inserted_id;
     }
 
     return;
@@ -302,16 +322,14 @@ sub insert_gsw {
 
         # determining $gsw_density here, which is different from isw_density
         my $half_length = int( $ex_set->cardinality / 2 );
-        my $gsw_density
-            = int( ( $ex_left_wave_length - $half_length ) / $gsw_size );
+        my $gsw_density = int( ( $ex_left_wave_length - $half_length ) / $gsw_size );
 
         # wave length, amplitude, trough_gc and gradient
         my $gsw_wave_length = $ex_left_wave_length;
         my $gsw_amplitude   = $ex_left_amplitude;
         my $gsw_trough_gc   = $ex_type eq 'T' ? $ex_gc : $prev_ex_gc;
         my $gsw_crest_gc    = $ex_type eq 'T' ? $prev_ex_gc : $ex_gc;
-        my $gsw_gradient
-            = int( $gsw_amplitude / $ex_left_wave_length / 0.00001 );
+        my $gsw_gradient    = int( $gsw_amplitude / $ex_left_wave_length / 0.00001 );
 
         # determining $gsw_type here, ascend and descent
         my $gsw_type;
@@ -379,11 +397,11 @@ sub insert_gsw {
             }
 
             for my $gsw (@gsw_windows) {
-                $gsw->{chr_name}  = $align->{chr_name};
-                $gsw->{chr_start} = $gsw->{set}->min + $align->{chr_start} - 1;
-                $gsw->{chr_end}   = $gsw->{set}->max + $align->{chr_start} - 1;
-                $gsw->{length}    = $gsw->{set}->cardinality;
-                $gsw->{runlist}   = $gsw->{chr_start} . '-' . $gsw->{chr_end};
+                $gsw->{chr_name}      = $align->{chr_name};
+                $gsw->{chr_start}     = $gsw->{set}->min + $align->{chr_start} - 1;
+                $gsw->{chr_end}       = $gsw->{set}->max + $align->{chr_start} - 1;
+                $gsw->{length}        = $gsw->{set}->cardinality;
+                $gsw->{runlist}       = $gsw->{chr_start} . '-' . $gsw->{chr_end};
                 $gsw->{align_runlist} = $gsw->{set}->runlist;
 
                 my $gsw_seq = substr $seq, $gsw->{set}->min - 1, $gsw->{length};
@@ -405,9 +423,7 @@ sub insert_gsw {
                 $gsw->{bed_count} = 0;
 
                 # gsw cv
-                my $resize_set
-                    = center_resize( $gsw->{set}, $comparable_set,
-                    $stat_segment_size );
+                my $resize_set = center_resize( $gsw->{set}, $comparable_set, $stat_segment_size );
                 if ( !$resize_set ) {
                     print "    Can't resize window!\n";
                     $gsw->{gc_mean} = undef;
@@ -424,7 +440,7 @@ sub insert_gsw {
 
                 delete $gsw->{set};
             }
-            $coll_gsw->batch_insert( \@gsw_windows, { safe => 1 } );
+            $coll_gsw->insert_many( \@gsw_windows );
         }
     }
 
@@ -433,22 +449,3 @@ sub insert_gsw {
 
 __END__
 
-=head1 NAME
-
-insert_gcwave.pl - Add GC ralated tables to alignDB
-
-=head1 SYNOPSIS
-
-    # S288c
-    mongo S288c --eval "db.dropDatabase();"
-    
-    # Runtime 5 seconds.
-    perl gen_mg.pl -d S288c -n S288c --dir ~/data/alignment/yeast_combine/S288C  --parallel 1
-    
-    # Runtime 38 seconds.
-    perl insert_gcwave.pl -d S288c --batch 1 --parallel 4
-    
-    # Runtime 21 seconds.
-    perl update_sw_cv.pl -d S288c --batch 1 --parallel 4
-
-=cut

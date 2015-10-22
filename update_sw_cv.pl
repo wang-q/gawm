@@ -3,24 +3,20 @@ use strict;
 use warnings;
 use autodie;
 
-use Getopt::Long;
-use Pod::Usage;
+use Getopt::Long qw(HelpMessage);
 use Config::Tiny;
 use YAML qw(Dump Load DumpFile LoadFile);
 
+use MCE;
 use MongoDB;
 $MongoDB::BSON::looks_like_number = 1;
-$MongoDB::BSON::utf8_flag_on      = 0;
 use MongoDB::OID;
-
-use MCE;
 
 use AlignDB::GC;
 use AlignDB::Stopwatch;
-use AlignDB::Util qw(:all);
 
 use FindBin;
-use lib "$FindBin::Bin/lib";
+use lib "$FindBin::RealBin/lib";
 use MyUtil qw(center_resize check_coll);
 
 #----------------------------------------------------------#
@@ -35,58 +31,60 @@ my $stopwatch = AlignDB::Stopwatch->new(
     program_conf => $Config,
 );
 
-# Database init values
-my $server = $Config->{database}{server};
-my $port   = $Config->{database}{port};
-my $dbname = $Config->{database}{db};
+# AlignDB::GC options
+my $stat_segment_size = $Config->{gc}{stat_segment_size};
+my $stat_window_size  = $Config->{gc}{stat_window_size};
+my $stat_window_step  = $Config->{gc}{stat_window_step};
 
-my $stat_segment_size = 500;
-my $stat_window_size  = 100;
-my $stat_window_step  = 100;
+=head1 NAME
 
-# run in parallel mode
-my $parallel = 1;
+update_sw_cv.pl - CV for ofgsw and gsw
 
-# number of alignments process in one child process
-my $batch_number = 10;
+=head1 SYNOPSIS
 
-my $man  = 0;
-my $help = 0;
+    perl update_sw_cv.pl [options]
+      Options:
+        --help      -?          brief help message
+        --server        STR     MongoDB server IP/Domain name
+        --port          INT     MongoDB server port
+        --db        -d  STR     database name
+        --parallel      INT     run in parallel mode, [1]
+        --batch         INT     number of alignments processed in one child
+                                process, [10]
+
+    perl update_sw_cv.pl -d S288c --batch 10 --parallel 1
+
+=cut
 
 GetOptions(
-    'help|?'     => \$help,
-    'man'        => \$man,
-    's|server=s' => \$server,
-    'P|port=i'   => \$port,
-    'd|db=s'     => \$dbname,
-    'parallel=i' => \$parallel,
-    'batch=i'    => \$batch_number,
-) or pod2usage(2);
-
-pod2usage(1) if $help;
-pod2usage( -exitstatus => 0, -verbose => 2 ) if $man;
+    'help|?' => sub { HelpMessage(0) },
+    'server=s'   => \( my $server       = $Config->{database}{server} ),
+    'port=i'     => \( my $port         = $Config->{database}{port} ),
+    'db|d=s'     => \( my $dbname       = $Config->{database}{db} ),
+    'parallel=i' => \( my $parallel     = 1 ),
+    'batch=i'    => \( my $batch_number = 10 ),
+) or HelpMessage(1);
 
 #----------------------------------------------------------#
-# init
+# Init
 #----------------------------------------------------------#
-$stopwatch->start_message("Update sliding cv of $dbname...");
+$stopwatch->start_message("Update sliding CV of $dbname...");
 
+# retrieve all _id from align
 my @jobs;
 {
-    my $mongo = MongoDB::MongoClient->new(
+    my $db = MongoDB::MongoClient->new(
         host          => $server,
         port          => $port,
         query_timeout => -1,
-    );
-    my $db = $mongo->get_database($dbname);
+    )->get_database($dbname);
 
-    my $coll = $db->get_collection('align');
-    @jobs = $coll->find->all;
-    printf "There are %d aligns totally.\n", scalar @jobs;
+    @jobs = $db->get_collection('align')->find->all;
+    printf "There are [%d] aligns totally.\n", scalar @jobs;
 
     # pre-allocate disk space
     print "Init disk space\n";
-    $db->get_collection('ofgsw')->update(
+    $db->get_collection('ofgsw')->update_many(
         { gc_cv => { '$exists' => 0, } },
         {   '$set' => {
                 gc_mean => undef,
@@ -94,10 +92,9 @@ my @jobs;
                 gc_std  => undef,
             }
         },
-        { multiple => 1 },
     );
 
-    $db->get_collection('gsw')->update(
+    $db->get_collection('gsw')->update_many(
         { gc_cv => { '$exists' => 0, } },
         {   '$set' => {
                 gc_mean => undef,
@@ -105,12 +102,11 @@ my @jobs;
                 gc_std  => undef,
             }
         },
-        { multiple => 1 },
     );
 }
 
 #----------------------------------------------------------#
-# start update
+# Worker
 #----------------------------------------------------------#
 my $worker = sub {
     my ( $self, $chunk_ref, $chunk_id ) = @_;
@@ -119,15 +115,14 @@ my $worker = sub {
     my $wid = MCE->wid;
 
     my $inner_watch = AlignDB::Stopwatch->new;
-    $inner_watch->block_message("* Process task [$chunk_id] by worker #$wid");
+    $inner_watch->block_message("Process task [$chunk_id] by worker #$wid");
 
     # wait forever for responses
-    my $mongo = MongoDB::MongoClient->new(
+    my $db = MongoDB::MongoClient->new(
         host          => $server,
         port          => $port,
         query_timeout => -1,
-    );
-    my $db = $mongo->get_database($dbname);
+    )->get_database($dbname);
 
     my $coll_seq   = $db->get_collection('sequence');
     my $coll_ofgsw = $db->get_collection('ofgsw');
@@ -211,17 +206,15 @@ my $worker = sub {
         #----------------------------#
         # MongoDB::OID would be overloaded to string when as hash key
         for my $key ( keys %stat_ofgsw_of ) {
-            $coll_ofgsw->update(
+            $coll_ofgsw->update_one(
                 { _id    => MongoDB::OID->new( value => $key ) },
                 { '$set' => $stat_ofgsw_of{$key}, },
-                { safe   => 1 },
             );
         }
         for my $key ( keys %stat_gsw_of ) {
-            $coll_gsw->update(
+            $coll_gsw->update_one(
                 { _id    => MongoDB::OID->new( value => $key ) },
                 { '$set' => $stat_gsw_of{$key}, },
-                { safe   => 1 },
             );
         }
     }
@@ -237,15 +230,13 @@ $mce->forchunk( \@jobs, $worker, );
 # check
 #----------------------------#
 {
-    my $mongo = MongoDB::MongoClient->new(
+    my $db = MongoDB::MongoClient->new(
         host          => $server,
         port          => $port,
         query_timeout => -1,
-    );
-    my $db = $mongo->get_database($dbname);
+    )->get_database($dbname);
     $stopwatch->block_message( check_coll( $db, 'ofgsw', 'gc_cv' ) );
     $stopwatch->block_message( check_coll( $db, 'gsw',   'gc_cv' ) );
-
 }
 
 $stopwatch->end_message;
@@ -253,13 +244,3 @@ $stopwatch->end_message;
 exit;
 
 __END__
-
-=head1 NAME
-
-update_sw_cv.pl - CV for ofgsw and gsw
-
-=head1 SYNOPSIS
-
-    perl update_sw_cv.pl -d alignDB --batch 10 --parallel 1
-
-=cut
