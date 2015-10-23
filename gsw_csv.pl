@@ -3,24 +3,21 @@ use strict;
 use warnings;
 use autodie;
 
-use Getopt::Long;
-use Pod::Usage;
+use Getopt::Long qw(HelpMessage);
 use Config::Tiny;
+use FindBin;
 use YAML qw(Dump Load DumpFile LoadFile);
 
 use MongoDB;
 $MongoDB::BSON::looks_like_number = 1;
-$MongoDB::BSON::utf8_flag_on      = 0;
 use MongoDB::OID;
 
 use AlignDB::Stopwatch;
 
-use FindBin;
-
 #----------------------------------------------------------#
 # GetOpt section
 #----------------------------------------------------------#
-my $Config = Config::Tiny->read("$FindBin::Bin/config.ini");
+my $Config = Config::Tiny->read("$FindBin::RealBin/config.ini");
 
 # record ARGV and Config
 my $stopwatch = AlignDB::Stopwatch->new(
@@ -29,45 +26,48 @@ my $stopwatch = AlignDB::Stopwatch->new(
     program_conf => $Config,
 );
 
-# Database init values
-my $server = $Config->{database}{server};
-my $port   = $Config->{database}{port};
-my $dbname = $Config->{database}{db};
+=head1 NAME
 
-my $outfile;
+gsw_csv.pl - Write gsws to a csv file
 
-my $man  = 0;
-my $help = 0;
+=head1 SYNOPSIS
+
+    perl gsw_csv.pl [options]
+      Options:
+        --help      -?          brief help message
+        --server        STR     MongoDB server IP/Domain name
+        --port          INT     MongoDB server port
+        --db        -d  STR     database name
+        --output    -o  STR     output filename, default is [db.gsw.csv]
+
+=cut
 
 GetOptions(
-    'help|?'     => \$help,
-    'man'        => \$man,
-    's|server=s' => \$server,
-    'P|port=i'   => \$port,
-    'd|db=s'     => \$dbname,
-    'o|output=s' => \$outfile,
-) or pod2usage(2);
-
-pod2usage(1) if $help;
-pod2usage( -exitstatus => 0, -verbose => 2 ) if $man;
+    'help|?' => sub { HelpMessage(0) },
+    'server=s' => \( my $server = $Config->{database}{server} ),
+    'port=i'   => \( my $port   = $Config->{database}{port} ),
+    'db|d=s'   => \( my $dbname = $Config->{database}{db} ),
+    'output|o=i' => \( my $outfile ),
+) or HelpMessage(1);
 
 $outfile = "$dbname.gsw.csv" unless $outfile;
 
 #----------------------------------------------------------#
 # init
 #----------------------------------------------------------#
-$stopwatch->start_message("Do stat for $dbname...");
+$stopwatch->start_message("Write gsws for $dbname...");
 
-my $mongo = MongoDB::MongoClient->new(
+my $db = MongoDB::MongoClient->new(
     host          => $server,
     port          => $port,
     query_timeout => -1,
-);
-my $db = $mongo->get_database($dbname);
+)->get_database($dbname);
 
 #----------------------------------------------------------#
-# worksheet -- distance_to_trough
+# Write
 #----------------------------------------------------------#
+
+## Original SQL
 #select
 #    gsw_distance distance,
 #    gsw_wave_length wave_length,
