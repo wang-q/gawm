@@ -5,6 +5,7 @@ use autodie;
 
 use Getopt::Long qw(HelpMessage);
 use Config::Tiny;
+use FindBin;
 use YAML qw(Dump Load DumpFile LoadFile);
 
 use MongoDB;
@@ -14,8 +15,6 @@ use MongoDB::OID;
 use AlignDB::IntSpan;
 use AlignDB::Stopwatch;
 use AlignDB::ToXLSX;
-
-use FindBin;
 
 #----------------------------------------------------------#
 # GetOpt section
@@ -58,7 +57,7 @@ GetOptions(
 $outfile = "$dbname.mg.xlsx" unless $outfile;
 
 #----------------------------------------------------------#
-# init
+# Init section
 #----------------------------------------------------------#
 $stopwatch->start_message("Do stat for $dbname...");
 

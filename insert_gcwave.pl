@@ -5,6 +5,7 @@ use autodie;
 
 use Getopt::Long qw(HelpMessage);
 use Config::Tiny;
+use FindBin;
 use YAML qw(Dump Load DumpFile LoadFile);
 
 use MCE;
@@ -16,7 +17,6 @@ use AlignDB::GC;
 use AlignDB::IntSpan;
 use AlignDB::Stopwatch;
 
-use FindBin;
 use lib "$FindBin::RealBin/lib";
 use MyUtil qw(center_resize check_coll calc_gc_ratio);
 
