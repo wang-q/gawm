@@ -41,7 +41,7 @@ stat_mg.pl - Do stats
         --port          INT     MongoDB server port
         --db        -d  STR     database name
         --output    -o  STR     output filename, default is [db.mg.xlsx]
-        --by                    tag, type or tt, default is [tag]
+        --by            STR     tag, type or tt, default is [tag]
 
 =cut
 
@@ -50,8 +50,8 @@ GetOptions(
     'server=s' => \( my $server = $Config->{database}{server} ),
     'port=i'   => \( my $port   = $Config->{database}{port} ),
     'db|d=s'   => \( my $dbname = $Config->{database}{db} ),
-    'output|o=i' => \my $outfile,
-    'by=i'       => \( my $by = "tag" ),
+    'output|o=s' => \my $outfile,
+    'by=s'       => \( my $by = "tag" ),
 ) or HelpMessage(1);
 
 $outfile = "$dbname.mg.xlsx" unless $outfile;
