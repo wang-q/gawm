@@ -81,9 +81,9 @@ my $distance_to_trough = sub {
     my ( $sheet_row, $sheet_col );
 
     my $coll = $db->get_collection('gsw');
-    my $exists = $coll->find( { gc_cv => { '$exists' => 1 } } )->count;
+    my $exists = $coll->find( { "gc.cv" => { '$exists' => 1 } } )->count;
     if ( !$exists ) {
-        print "    gsw.gc_cv doesn't exist\n";
+        print "    gsw.gc.cv doesn't exist\n";
         print "    Skip sheet $sheet_name\n";
         return;
     }
@@ -100,11 +100,11 @@ my $distance_to_trough = sub {
     }
 
     my @docs = $coll->aggregate(
-        [   { '$match' => { distance => { '$lte' => 20 } } },
+        [   { '$match' => { 'gce.distance' => { '$lte' => 20 } } },
             {   '$group' => {
-                    '_id'       => '$distance',
-                    'avg_gc'    => { '$avg' => '$gc' },
-                    'avg_gc_cv' => { '$avg' => '$gc_cv' },
+                    '_id'       => '$gce.distance',
+                    'avg_gc'    => { '$avg' => '$gc.gc' },
+                    'avg_gc_cv' => { '$avg' => '$gc.cv' },
                     'avg_bed'   => { '$avg' => '$bed_count' },
                     'count'     => { '$sum' => 1 },
                 }
@@ -135,9 +135,9 @@ my $distance_to_crest = sub {
     my ( $sheet_row, $sheet_col );
 
     my $coll = $db->get_collection('gsw');
-    my $exists = $coll->find( { gc_cv => { '$exists' => 1 } } )->count;
+    my $exists = $coll->find( { 'gc.cv' => { '$exists' => 1 } } )->count;
     if ( !$exists ) {
-        print "    gsw.gc_cv doesn't exist\n";
+        print "    gsw.gc.cv doesn't exist\n";
         print "    Skip sheet $sheet_name\n";
         return;
     }
@@ -154,11 +154,11 @@ my $distance_to_crest = sub {
     }
 
     my @docs = $coll->aggregate(
-        [   { '$match' => { distance_crest => { '$lte' => 20 } } },
+        [   { '$match' => { 'gce.distance_crest' => { '$lte' => 20 } } },
             {   '$group' => {
-                    '_id'       => '$distance_crest',
-                    'avg_gc'    => { '$avg' => '$gc' },
-                    'avg_gc_cv' => { '$avg' => '$gc_cv' },
+                    '_id'       => '$gce.distance_crest',
+                    'avg_gc'    => { '$avg' => '$gc.gc' },
+                    'avg_gc_cv' => { '$avg' => '$gc.cv' },
                     'avg_bed'   => { '$avg' => '$bed_count' },
                     'count'     => { '$sum' => 1 },
                 }
@@ -189,9 +189,9 @@ my $gradient = sub {
     my ( $sheet_row, $sheet_col );
 
     my $coll = $db->get_collection('gsw');
-    my $exists = $coll->find( { gc_cv => { '$exists' => 1 } } )->count;
+    my $exists = $coll->find( { 'gc.cv' => { '$exists' => 1 } } )->count;
     if ( !$exists ) {
-        print "    gsw.gc_cv doesn't exist\n";
+        print "    gsw.gc.cv doesn't exist\n";
         print "    Skip sheet $sheet_name\n";
         return;
     }
@@ -208,11 +208,11 @@ my $gradient = sub {
     }
 
     my @docs = $coll->aggregate(
-        [   { '$match' => { gradient => { '$gte' => 1 } } },
+        [   { '$match' => { 'gce.gradient' => { '$gte' => 1 } } },
             {   '$group' => {
-                    '_id'       => '$gradient',
-                    'avg_gc'    => { '$avg' => '$gc' },
-                    'avg_gc_cv' => { '$avg' => '$gc_cv' },
+                    '_id'       => '$gce.gradient',
+                    'avg_gc'    => { '$avg' => '$gc.gc' },
+                    'avg_gc_cv' => { '$avg' => '$gc.cv' },
                     'avg_bed'   => { '$avg' => '$bed_count' },
                     'count'     => { '$sum' => 1 },
                 }
@@ -243,9 +243,9 @@ my $ofg_all = sub {
     my ( $sheet_row, $sheet_col );
 
     my $coll = $db->get_collection('ofgsw');
-    my $exists = $coll->find( { gc_cv => { '$exists' => 1 } } )->count;
+    my $exists = $coll->find( { 'gc.cv' => { '$exists' => 1 } } )->count;
     if ( !$exists ) {
-        print "    ofgsw.gc_cv doesn't exist\n";
+        print "    ofgsw.gc.cv doesn't exist\n";
         print "    Skip sheet $sheet_name\n";
         return;
     }
@@ -262,11 +262,11 @@ my $ofg_all = sub {
     }
 
     my @docs = $coll->aggregate(
-        [   { '$match' => { distance => { '$lte' => 20 } } },
+        [   { '$match' => { 'ofg.distance' => { '$lte' => 20 } } },
             {   '$group' => {
-                    '_id'       => '$distance',
-                    'avg_gc'    => { '$avg' => '$gc' },
-                    'avg_gc_cv' => { '$avg' => '$gc_cv' },
+                    '_id'       => '$ofg.distance',
+                    'avg_gc'    => { '$avg' => '$gc.gc' },
+                    'avg_gc_cv' => { '$avg' => '$gc.cv' },
                     'avg_bed'   => { '$avg' => '$bed_count' },
                     'count'     => { '$sum' => 1 },
                 }
@@ -291,9 +291,9 @@ my $ofg_all = sub {
 my $ofg_tag_type = sub {
 
     my $coll = $db->get_collection('ofgsw');
-    my $exists = $coll->find( { gc_cv => { '$exists' => 1 } } )->count;
+    my $exists = $coll->find( { 'gc.cv' => { '$exists' => 1 } } )->count;
     if ( !$exists ) {
-        print "    ofgsw.gc_cv doesn't exist\n";
+        print "    ofgsw.gc.cv doesn't exist\n";
         print "    Skip sheets ofg_tag_type\n";
         return;
     }
@@ -328,26 +328,26 @@ my $ofg_tag_type = sub {
 
         my $condition;
         if ( $by eq "tag" ) {
-            $condition = { "distance" => { '$lte' => 20 }, "ofg.tag" => $bind, };
+            $condition = { 'ofg.distance' => { '$lte' => 20 }, 'ofg.tag' => $bind, };
         }
         elsif ( $by eq "type" ) {
-            $condition = { "distance" => { '$lte' => 20 }, "ofg.type" => $bind, };
+            $condition = { 'ofg.distance' => { '$lte' => 20 }, 'ofg.type' => $bind, };
         }
         elsif ( $by eq "tt" ) {
             my ( $tag, $type ) = split /\-/, $bind;
             $condition = {
-                "distance" => { '$lte' => 20 },
-                "ofg.tag"  => $tag,
-                "ofg.type" => $type,
+                'ofg.distance' => { '$lte' => 20 },
+                'ofg.tag'  => $tag,
+                'ofg.type' => $type,
             };
         }
 
         my @docs = $coll->aggregate(
             [   { '$match' => $condition },
                 {   '$group' => {
-                        '_id'       => '$distance',
-                        'avg_gc'    => { '$avg' => '$gc' },
-                        'avg_gc_cv' => { '$avg' => '$gc_cv' },
+                        '_id'       => '$ofg.distance',
+                        'avg_gc'    => { '$avg' => '$gc.gc' },
+                        'avg_gc_cv' => { '$avg' => '$gc.cv' },
                         'avg_bed'   => { '$avg' => '$bed_count' },
                         'count'     => { '$sum' => 1 },
                     }

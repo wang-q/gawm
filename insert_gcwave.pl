@@ -95,10 +95,10 @@ my @jobs;
         query_timeout => -1,
     )->get_database($dbname);
 
-    @jobs = $db->get_collection('align')->find->all;
+    @jobs = $db->get_collection('align')->find->fields( { _id => 1 } )->all;
     printf "There are [%d] aligns totally.\n", scalar @jobs;
 
-    $db->get_collection('extreme')->drop;
+    $db->get_collection('gce')->drop;
     $db->get_collection('gsw')->drop;
 }
 
@@ -107,7 +107,7 @@ my @jobs;
 #----------------------------------------------------------#
 my $worker = sub {
     my ( $self, $chunk_ref, $chunk_id ) = @_;
-    my @aligns = @{$chunk_ref};
+    my @jobs = @{$chunk_ref};
 
     my $wid = MCE->wid;
 
@@ -121,8 +121,6 @@ my $worker = sub {
         query_timeout => -1,
     )->get_database($dbname);
 
-    my $coll_seq = $db->get_collection('sequence');
-
     # mocking AlignDB::GC
     my $obj_gc = AlignDB::GC->new(
         wave_window_size => $wave_window_size,
@@ -135,16 +133,22 @@ my $worker = sub {
         skip_mdcw        => 1,
     );
 
-    for my $align (@aligns) {
-        printf "Process align %s:%s-%s\n", $align->{chr_name}, $align->{chr_start}, $align->{chr_end};
+    my $coll_align = $db->get_collection('align');
+    for my $job (@jobs) {
+        my $align = $coll_align->find_one( { _id => $job->{_id} } );
+        if ( !defined $align ) {
+            printf "Can't find align for %s\n", $job->{_id};
+            next;
+        }
 
-        my $seq = $coll_seq->find_one( { _id => $align->{seq_id} } )->{seq};
+        printf "Process align %s:%s-%s\n", $align->{chr}{name}, $align->{chr}{start},
+            $align->{chr}{end};
 
         print "    Insert gc extremes\n";
-        insert_extreme( $obj_gc, $db, $align, $seq );
+        insert_gce( $obj_gc, $db, $align );
 
         print "    Insert gc sliding windows\n";
-        insert_gsw( $obj_gc, $db, $align, $seq );
+        insert_gsw( $obj_gc, $db, $align );
     }
 
     $inner_watch->block_message( "Task [$chunk_id] has been processed.", "duration" );
@@ -169,14 +173,14 @@ $mce->forchunk( \@jobs, $worker, );
     )->get_database($dbname);
 
     {
-        my $name = "extreme";
+        my $name = "gce";
         $stopwatch->block_message("Indexing $name");
         my $coll    = $db->get_collection($name);
         my $indexes = $coll->indexes;
-        $indexes->create_one( [ align_id => 1 ] );
-        $indexes->create_one( [ prev_id  => 1 ] );
-        $indexes->create_one( [ chr_name => 1, chr_start => 1, chr_end => 1 ] );
-        $indexes->create_one( [ type     => 1 ] );
+        $indexes->create_one( [ 'align._id' => 1 ] );
+        $indexes->create_one( [ prev_id     => 1 ] );
+        $indexes->create_one( [ "chr.name"  => 1, "chr.start" => 1, "chr.end" => 1 ] );
+        $indexes->create_one( [ type        => 1 ] );
     }
 
     {
@@ -184,18 +188,18 @@ $mce->forchunk( \@jobs, $worker, );
         $stopwatch->block_message("Indexing $name");
         my $coll    = $db->get_collection($name);
         my $indexes = $coll->indexes;
-        $indexes->create_one( [ align_id        => 1 ] );
-        $indexes->create_one( [ extreme_id      => 1 ] );
-        $indexes->create_one( [ prev_extreme_id => 1 ] );
-        $indexes->create_one( [ chr_name        => 1, chr_start => 1, chr_end => 1 ] );
-        $indexes->create_one( [ type            => 1 ] );
-        $indexes->create_one( [ distance        => 1 ] );
-        $indexes->create_one( [ distance_crest  => 1 ] );
-        $indexes->create_one( [ gradient        => 1 ] );
+        $indexes->create_one( [ 'align._id'          => 1 ] );
+        $indexes->create_one( [ 'gce._id'            => 1 ] );
+        $indexes->create_one( [ 'gce.prev_id'        => 1 ] );
+        $indexes->create_one( [ "chr.name"           => 1, "chr.start" => 1, "chr.end" => 1 ] );
+        $indexes->create_one( [ type                 => 1 ] );
+        $indexes->create_one( [ 'gce.distance'       => 1 ] );
+        $indexes->create_one( [ 'gce.distance_crest' => 1 ] );
+        $indexes->create_one( [ 'gce.gradient'       => 1 ] );
     }
 
-    $stopwatch->block_message( check_coll( $db, 'extreme', '_id' ) );
-    $stopwatch->block_message( check_coll( $db, 'gsw',     '_id' ) );
+    $stopwatch->block_message( check_coll( $db, 'gce', '_id' ) );
+    $stopwatch->block_message( check_coll( $db, 'gsw', 'gc.cv' ) );
 }
 
 $stopwatch->end_message;
@@ -205,15 +209,14 @@ exit;
 #----------------------------------------------------------#
 # Subroutines
 #----------------------------------------------------------#
-sub insert_extreme {
+sub insert_gce {
     my $obj_gc = shift;
     my $db     = shift;
     my $align  = shift;
-    my $seq    = shift;
 
     my $comparable_set = AlignDB::IntSpan->new( "1-" . $align->{length} );
-    my @extreme_site;
-    my @slidings = $obj_gc->gc_wave( [$seq], $comparable_set );
+    my @gce_site;
+    my @slidings = $obj_gc->gc_wave( [ $align->{seq} ], $comparable_set );
     for my $s (@slidings) {
         my $flag = $s->{high_low_flag};
 
@@ -221,7 +224,7 @@ sub insert_extreme {
         if ( $flag eq 'T' or $flag eq 'C' ) {
             $s->{type} = $flag;
             delete $s->{high_low_flag};
-            push @extreme_site, $s;
+            push @gce_site, $s;
         }
     }
 
@@ -230,60 +233,69 @@ sub insert_extreme {
     my $half_length  = int( $windows_size / 2 );
 
     # left
-    my $prev_extreme_middle_right_idx = 1;
-    my $prev_extreme_gc               = $slidings[0]->{gc};
-    for ( my $i = 0; $i < scalar @extreme_site; $i++ ) {
+    my $prev_gce_middle_right_idx = 1;
+    my $prev_gce_gc               = $slidings[0]->{gc};
+    for ( my $i = 0; $i < scalar @gce_site; $i++ ) {
 
         # wave_length
-        my $extreme_set             = $extreme_site[$i]->{set};
-        my $extreme_middle_left     = $extreme_set->at($half_length);
-        my $extreme_middle_left_idx = $comparable_set->index($extreme_middle_left);
-        my $left_wave_length        = $extreme_middle_left_idx - $prev_extreme_middle_right_idx + 1;
-        $prev_extreme_middle_right_idx = $extreme_middle_left_idx + 1;
-        $extreme_site[$i]->{left_wave_length} = $left_wave_length;
+        my $gce_set             = $gce_site[$i]->{set};
+        my $gce_middle_left     = $gce_set->at($half_length);
+        my $gce_middle_left_idx = $comparable_set->index($gce_middle_left);
+        my $left_wave_length    = $gce_middle_left_idx - $prev_gce_middle_right_idx + 1;
+        $prev_gce_middle_right_idx = $gce_middle_left_idx + 1;
+        $gce_site[$i]->{left_wave_length} = $left_wave_length;
 
         # amplitude
-        my $extreme_gc     = $extreme_site[$i]->{gc};
-        my $left_amplitude = abs( $extreme_gc - $prev_extreme_gc );
-        $extreme_site[$i]->{left_amplitude} = $left_amplitude;
-        $prev_extreme_gc = $extreme_gc;
+        my $gce_gc         = $gce_site[$i]->{gc};
+        my $left_amplitude = abs( $gce_gc - $prev_gce_gc );
+        $gce_site[$i]->{left_amplitude} = $left_amplitude;
+        $prev_gce_gc = $gce_gc;
     }
 
     # right
-    my $next_extreme_middle_left_idx = $comparable_set->cardinality;
-    my $next_extreme_gc              = $slidings[-1]->{gc};
-    for ( my $i = scalar @extreme_site - 1; $i >= 0; $i-- ) {
+    my $next_gce_middle_left_idx = $comparable_set->cardinality;
+    my $next_gce_gc              = $slidings[-1]->{gc};
+    for ( my $i = scalar @gce_site - 1; $i >= 0; $i-- ) {
 
         # wave_length
-        my $extreme_set              = $extreme_site[$i]->{set};
-        my $extreme_middle_right     = $extreme_set->at( $half_length + 1 );
-        my $extreme_middle_right_idx = $comparable_set->index($extreme_middle_right);
-        my $right_wave_length = $next_extreme_middle_left_idx - $extreme_middle_right_idx + 1;
-        $next_extreme_middle_left_idx = $extreme_middle_right_idx - 1;
-        $extreme_site[$i]->{right_wave_length} = $right_wave_length;
+        my $gce_set              = $gce_site[$i]->{set};
+        my $gce_middle_right     = $gce_set->at( $half_length + 1 );
+        my $gce_middle_right_idx = $comparable_set->index($gce_middle_right);
+        my $right_wave_length    = $next_gce_middle_left_idx - $gce_middle_right_idx + 1;
+        $next_gce_middle_left_idx = $gce_middle_right_idx - 1;
+        $gce_site[$i]->{right_wave_length} = $right_wave_length;
 
         # amplitude
-        my $extreme_gc      = $extreme_site[$i]->{gc};
-        my $right_amplitude = abs( $extreme_gc - $next_extreme_gc );
-        $extreme_site[$i]->{right_amplitude} = $right_amplitude;
-        $prev_extreme_gc = $extreme_gc;
+        my $gce_gc          = $gce_site[$i]->{gc};
+        my $right_amplitude = abs( $gce_gc - $next_gce_gc );
+        $gce_site[$i]->{right_amplitude} = $right_amplitude;
+        $prev_gce_gc = $gce_gc;
     }
 
-    my $coll_extreme    = $db->get_collection('extreme');
-    my $prev_extreme_id = undef;
-    for my $ex (@extreme_site) {
-        $ex->{chr_name}      = $align->{chr_name};
-        $ex->{chr_start}     = $ex->{set}->min + $align->{chr_start} - 1;
-        $ex->{chr_end}       = $ex->{set}->max + $align->{chr_start} - 1;
-        $ex->{length}        = $ex->{set}->cardinality;
-        $ex->{runlist}       = $ex->{chr_start} . '-' . $ex->{chr_end};
-        $ex->{align_runlist} = $ex->{set}->runlist;
-        delete $ex->{set};
+    my $coll        = $db->get_collection('gce');
+    my $prev_gce_id = undef;
+    for my $exs (@gce_site) {
+        my $chr_start = $exs->{set}->min + $align->{chr}{start} - 1;
+        my $chr_end   = $exs->{set}->max + $align->{chr}{start} - 1;
+        $exs->{chr} = {
+            common_name => $align->{chr}{common_name},
+            name        => $align->{chr}{name},
+            start       => $chr_start,
+            end         => $chr_end,
+            strand      => $align->{chr}{strand},
+            runlist     => $chr_start . '-' . $chr_end,
+        };
+        $exs->{align} = {
+            _id     => $align->{_id},
+            start   => $exs->{set}->min,
+            end     => $exs->{set}->max,
+            runlist => $exs->{set}->runlist,
+        };
+        $exs->{length} = $exs->{set}->cardinality;
+        delete $exs->{set};
 
-        $ex->{align_id} = $align->{_id};
-
-        $ex->{prev_id} = $prev_extreme_id;
-        $prev_extreme_id = $coll_extreme->insert_one($ex)->inserted_id;
+        $exs->{prev_id} = $prev_gce_id;
+        $prev_gce_id = $coll->insert_one($exs)->inserted_id;
     }
 
     return;
@@ -293,32 +305,31 @@ sub insert_gsw {
     my $obj_gc = shift;
     my $db     = shift;
     my $align  = shift;
-    my $seq    = shift;
 
     my $comparable_set = AlignDB::IntSpan->new( "1-" . $align->{length} );
 
-    my $coll_extreme = $db->get_collection('extreme');
-    my $coll_gsw     = $db->get_collection('gsw');
+    my $coll_gce = $db->get_collection('gce');
+    my $coll_gsw = $db->get_collection('gsw');
 
     # get gc sliding windows' sizes
     my $gsw_size = $obj_gc->gsw_size;
 
-    my @extremes = $coll_extreme->find( { align_id => $align->{_id} } )->all;
-    for my $ex (@extremes) {
+    my @gces = $coll_gce->find( { "align._id" => $align->{_id} } )->all;
+    for my $ex (@gces) {
 
-        # bypass the first extreme
+        # bypass the first gce
         next unless $ex->{prev_id};
 
-        # get attrs of the two extremes
+        # get attrs of the two gces
         my $ex_type             = $ex->{type};
         my $ex_gc               = $ex->{gc};
         my $ex_left_amplitude   = $ex->{left_amplitude};
         my $ex_left_wave_length = $ex->{left_wave_length};
-        my $ex_set              = AlignDB::IntSpan->new( $ex->{align_runlist} );
+        my $ex_set              = AlignDB::IntSpan->new( $ex->{align}{runlist} );
 
-        my $prev_ex     = $coll_extreme->find_one( { _id => $ex->{prev_id} } );
+        my $prev_ex     = $coll_gce->find_one( { _id => $ex->{prev_id} } );
         my $prev_ex_gc  = $prev_ex->{gc};
-        my $prev_ex_set = AlignDB::IntSpan->new( $prev_ex->{align_runlist} );
+        my $prev_ex_set = AlignDB::IntSpan->new( $prev_ex->{align}{runlist} );
 
         # determining $gsw_density here, which is different from isw_density
         my $half_length = int( $ex_set->cardinality / 2 );
@@ -338,24 +349,28 @@ sub insert_gsw {
             $gsw_type = 'D';        # descend, left of trough£¬right of crest
             push @gsw_windows,
                 {
-                type           => 'T',
-                set            => $ex_set,
-                distance       => 0,
-                distance_crest => $gsw_density + 1,
+                type => 'T',
+                set  => $ex_set,
+                gce  => {
+                    distance       => 0,
+                    distance_crest => $gsw_density + 1,
+                },
                 };
         }
         elsif ( $ex_type eq 'C' ) {    # crest
             $gsw_type = 'A';           # ascend, right of trough, left of crest
             push @gsw_windows,
                 {
-                type           => 'C',
-                set            => $ex_set,
-                distance       => $gsw_density + 1,
-                distance_crest => 0,
+                type => 'C',
+                set  => $ex_set,
+                gce  => {
+                    distance       => $gsw_density + 1,
+                    distance_crest => 0,
+                },
                 };
         }
         else {
-            warn "extreme_type [$ex_type] error\n";
+            warn "gce_type [$ex_type] error\n";
         }
 
         {    # More windows will be submitted in the following section
@@ -380,10 +395,12 @@ sub insert_gsw {
 
                 push @gsw_windows,
                     {
-                    type           => $gsw_type,
-                    set            => $gsw_set,
-                    distance       => $gsw_distance,
-                    distance_crest => $gsw_density - $gsw_distance + 1,
+                    type => $gsw_type,
+                    set  => $gsw_set,
+                    gce  => {
+                        distance       => $gsw_distance,
+                        distance_crest => $gsw_density - $gsw_distance + 1,
+                    }
                     };
 
                 if ( $gsw_type eq 'A' ) {
@@ -397,46 +414,47 @@ sub insert_gsw {
             }
 
             for my $gsw (@gsw_windows) {
-                $gsw->{chr_name}      = $align->{chr_name};
-                $gsw->{chr_start}     = $gsw->{set}->min + $align->{chr_start} - 1;
-                $gsw->{chr_end}       = $gsw->{set}->max + $align->{chr_start} - 1;
-                $gsw->{length}        = $gsw->{set}->cardinality;
-                $gsw->{runlist}       = $gsw->{chr_start} . '-' . $gsw->{chr_end};
-                $gsw->{align_runlist} = $gsw->{set}->runlist;
+                my $chr_start = $gsw->{set}->min + $align->{chr}{start} - 1;
+                my $chr_end   = $gsw->{set}->max + $align->{chr}{start} - 1;
 
-                my $gsw_seq = substr $seq, $gsw->{set}->min - 1, $gsw->{length};
-                $gsw->{gc} = calc_gc_ratio($gsw_seq);
+                $gsw->{chr} = {
+                    common_name => $align->{chr}{common_name},
+                    name        => $align->{chr}{name},
+                    start       => $chr_start,
+                    end         => $chr_end,
+                    strand      => $align->{chr}{strand},
+                    runlist     => $chr_start . '-' . $chr_end,
+                };
+                $gsw->{align} = {
+                    _id     => $align->{_id},
+                    start   => $gsw->{set}->min,
+                    end     => $gsw->{set}->max,
+                    runlist => $gsw->{set}->runlist,
+                };
 
-                # ids
-                $gsw->{align_id}        = $align->{_id};
-                $gsw->{extreme_id}      = $ex->{_id};
-                $gsw->{prev_extreme_id} = $prev_ex->{_id};
+                $gsw->{length} = $gsw->{set}->cardinality;
 
                 # wave properties
-                $gsw->{wave_length} = $gsw_wave_length;
-                $gsw->{amplitude}   = $gsw_amplitude;
-                $gsw->{trough_gc}   = $gsw_trough_gc;
-                $gsw->{crest_gc}    = $gsw_crest_gc;
-                $gsw->{gradient}    = $gsw_gradient;
+                $gsw->{gce} = {
+                    _id         => $ex->{_id},
+                    prev_id     => $prev_ex->{_id},
+                    wave_length => $gsw_wave_length,
+                    amplitude   => $gsw_amplitude,
+                    trough_gc   => $gsw_trough_gc,
+                    crest_gc    => $gsw_crest_gc,
+                    gradient    => $gsw_gradient,
+                    %{ $gsw->{gce} },
+                };
 
                 # pre allocate
                 $gsw->{bed_count} = 0;
-
-                # gsw cv
-                my $resize_set = center_resize( $gsw->{set}, $comparable_set, $stat_segment_size );
-                if ( !$resize_set ) {
-                    print "    Can't resize window!\n";
-                    $gsw->{gc_mean} = undef;
-                    $gsw->{gc_cv}   = undef;
-                    $gsw->{gc_std}  = undef;
-                }
-                else {
-                    my ( $gc_mean, $gc_std, $gc_cv, $gc_mdcw )
-                        = $obj_gc->segment_gc_stat( [$seq], $resize_set );
-                    $gsw->{gc_mean} = $gc_mean;
-                    $gsw->{gc_cv}   = $gc_cv;
-                    $gsw->{gc_std}  = $gc_std;
-                }
+                my $gsw_seq = substr $align->{seq}, $gsw->{set}->min - 1, $gsw->{length};
+                $gsw->{gc} = {
+                    gc   => calc_gc_ratio($gsw_seq),
+                    mean => 0.0,
+                    cv   => 0.0,
+                    std  => 0.0,
+                };
 
                 delete $gsw->{set};
             }

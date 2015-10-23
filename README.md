@@ -43,6 +43,8 @@ perl gen_mg.pl -d S288c_spo11 -n S288c --dir ~/data/alignment/yeast_combine/S288
 
 perl insert_bed.pl -d S288c_spo11 -tag spo11 -f ~/Scripts/alignDB/ofg/spo11/spo11_hot.bed --batch 1 --parallel 4
 
+perl update_sw_cv.pl -d S288c_spo11 --batch 1 --parallel 4
+
 perl stat_mg.pl -d S288c_spo11 --by tag
 
 perl chart_mg.pl --replace ofg="DSBs" -i d:\wq\GC\autochart\131230_repli_insert\S288C_spo11.mg.xlsx

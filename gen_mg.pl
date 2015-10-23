@@ -97,15 +97,14 @@ $stopwatch->start_message("Generate database from fasta files");
         query_timeout => -1,
     )->get_database($dbname);
 
-    $db->get_collection('chromosome')->drop;
-    $db->get_collection('sequence')->drop;
+    $db->get_collection('chr')->drop;
     $db->get_collection('align')->drop;
 }
 
 #----------------------------------------------------------#
 # Search for size and fasta files
 #----------------------------------------------------------#
-$stopwatch->block_message("Insert to chromosome");
+$stopwatch->block_message("Insert to chr");
 
 if ( !defined $size_file ) {
     if ( path($dir)->is_file ) {
@@ -141,11 +140,11 @@ printf "\n----Total .fa Files: %4s----\n\n", scalar @files;
     );
     my $db = $mongo->get_database($dbname);
 
-    my $coll_chr = $db->get_collection('chromosome');
+    my $coll_chr = $db->get_collection('chr');
 
     my $csv = Text::CSV_XS->new( { binary => 1, eol => "\n", sep => "\t" } );
     open my $csv_fh, "<", $size_file;
-    my @fields = qw{chr_name chr_length};
+    my @fields = qw{name length};
 
     my @chrs;
     while ( my $row = $csv->getline($csv_fh) ) {
@@ -183,85 +182,77 @@ my $worker = sub {
     )->get_database($dbname);
 
     my ( $seq_of, $seq_names ) = read_fasta($infile);
-    my $chr_name   = $seq_names->[0];
-    my $chr_seq    = $seq_of->{ $seq_names->[0] };
-    my $chr_length = length $chr_seq;
 
-    # find chromosome OID
-    my $coll_chr = $db->get_collection('chromosome');
-    my $chr_id = $coll_chr->find_one( { 'common_name' => $common_name, 'chr_name' => $chr_name } );
-    return unless $chr_id;
-    $chr_id = $chr_id->{_id};
+    for my $chr_name ( @{$seq_names} ) {
+        print "    Processing chromosome $chr_name\n";
 
-    my $ambiguous_set = AlignDB::IntSpan->new;
-    for ( my $pos = 0; $pos < $chr_length; $pos++ ) {
-        my $base = substr $chr_seq, $pos, 1;
-        if ( $base =~ /[^ACGT-]/i ) {
-            $ambiguous_set->add( $pos + 1 );
+        my $chr_seq    = $seq_of->{$chr_name};
+        my $chr_length = length $chr_seq;
+
+        # find chromosome OID
+        my $coll_chr = $db->get_collection('chr');
+        my $chr_id = $coll_chr->find_one( { 'common_name' => $common_name, 'name' => $chr_name } );
+        return unless $chr_id;
+        $chr_id = $chr_id->{_id};
+
+        my $ambiguous_set = AlignDB::IntSpan->new;
+        for ( my $pos = 0; $pos < $chr_length; $pos++ ) {
+            my $base = substr $chr_seq, $pos, 1;
+            if ( $base =~ /[^ACGT-]/i ) {
+                $ambiguous_set->add( $pos + 1 );
+            }
         }
-    }
-    printf "    Ambiguous region for %s:\n        %s\n", $chr_name, $ambiguous_set->runlist;
+        printf "    Ambiguous region for %s:\n        %s\n", $chr_name, $ambiguous_set->runlist;
 
-    my $valid_set = AlignDB::IntSpan->new("1-$chr_length");
-    $valid_set->subtract($ambiguous_set);
-    $valid_set = $valid_set->fill( $fill - 1 );
-    printf "    Valid region for %s:\n        %s\n", $chr_name, $valid_set->runlist;
+        my $valid_set = AlignDB::IntSpan->new("1-$chr_length");
+        $valid_set->subtract($ambiguous_set);
+        $valid_set = $valid_set->fill( $fill - 1 );
+        printf "    Valid region for %s:\n        %s\n", $chr_name, $valid_set->runlist;
 
-    my @regions;    # ([start, end], [start, end], ...)
-    for my $set ( $valid_set->sets ) {
-        my $size = $set->size;
-        next if $size < $min_length;
+        my @regions;    # ([start, end], [start, end], ...)
+        for my $set ( $valid_set->sets ) {
+            my $size = $set->size;
+            next if $size < $min_length;
 
-        my @set_regions;
-        my $pos = $set->min;
-        my $max = $set->max;
-        while ( $max - $pos + 1 > $truncated_length ) {
-            push @set_regions, [ $pos, $pos + $truncated_length - 1 ];
-            $pos += $truncated_length;
+            my @set_regions;
+            my $pos = $set->min;
+            my $max = $set->max;
+            while ( $max - $pos + 1 > $truncated_length ) {
+                push @set_regions, [ $pos, $pos + $truncated_length - 1 ];
+                $pos += $truncated_length;
+            }
+            if ( scalar @set_regions > 0 ) {
+                $set_regions[-1]->[1] = $max;
+            }
+            else {
+                @set_regions = ( [ $pos, $max ] );
+            }
+            push @regions, @set_regions;
         }
-        if ( scalar @set_regions > 0 ) {
-            $set_regions[-1]->[1] = $max;
+
+        # insert to collection align
+        my $coll_align = $db->get_collection('align');
+        for my $region (@regions) {
+            my ( $start, $end ) = @{$region};
+            my $length  = $end - $start + 1;
+            my $runlist = AlignDB::IntSpan->new("$start-$end")->runlist;
+            my $seq     = substr $chr_seq, $start - 1, $length;
+
+            my $data = {
+                chr => {
+                    common_name => $common_name,
+                    _id         => $chr_id,
+                    name        => $chr_name,
+                    start       => $start,
+                    end         => $end,
+                    strand      => '+',
+                    runlist     => $runlist,
+                },
+                length => $length,
+                seq    => $seq,
+            };
+            $coll_align->insert_one($data);
         }
-        else {
-            @set_regions = ( [ $pos, $max ] );
-        }
-        push @regions, @set_regions;
-    }
-
-    # collections
-    my $coll_seq   = $db->get_collection('sequence');
-    my $coll_align = $db->get_collection('align');
-
-    for my $region (@regions) {
-        my ( $start, $end ) = @{$region};
-        my $length  = $end - $start + 1;
-        my $runlist = AlignDB::IntSpan->new("$start-$end")->runlist;
-        my $seq     = substr $chr_seq, $start - 1, $length;
-
-        my $data_seq = {
-            common_name => $common_name,
-            chr_id      => $chr_id,
-            chr_name    => $chr_name,
-            chr_start   => $start,
-            chr_end     => $end,
-            chr_strand  => '+',
-            seq         => $seq,
-            length      => $length,
-            runlist     => $runlist,
-            level       => 1,              # top level
-        };
-        my $seq_id = $coll_seq->insert_one($data_seq)->inserted_id;
-
-        my $data_align = {
-            chr_name   => $chr_name,
-            chr_start  => $start,
-            chr_end    => $end,
-            chr_strand => '+',
-            length     => $length,
-            runlist    => $runlist,
-            seq_id     => $seq_id,
-        };
-        $coll_align->insert_one($data_align);
     }
 
     $inner_watch->block_message( "$infile has been processed.", "duration" );
@@ -286,20 +277,11 @@ $mce->foreach( \@files, $worker, );    # foreach implies chunk_size => 1.
     )->get_database($dbname);
 
     {
-        my $name = "chromosome";
+        my $name = "chr";
         $stopwatch->block_message("Indexing $name");
         my $coll    = $db->get_collection($name);
         my $indexes = $coll->indexes;
-        $indexes->create_one( [ common_name => 1, chr_name => 1 ], { unique => 1 } );
-    }
-
-    {
-        my $name = "sequence";
-        $stopwatch->block_message("Indexing $name");
-        my $coll    = $db->get_collection($name);
-        my $indexes = $coll->indexes;
-        $indexes->create_one( [ chr_name => 1, chr_start => 1, chr_end => 1 ] );
-        $indexes->create_one( [ level => 1 ] );
+        $indexes->create_one( [ common_name => 1, name => 1 ], { unique => 1 } );
     }
 
     {
@@ -307,13 +289,11 @@ $mce->foreach( \@files, $worker, );    # foreach implies chunk_size => 1.
         $stopwatch->block_message("Indexing $name");
         my $coll    = $db->get_collection($name);
         my $indexes = $coll->indexes;
-        $indexes->create_one( [ chr_name => 1, chr_start => 1, chr_end => 1 ] );
-        $indexes->create_one( [ seq_id => 1 ] );
+        $indexes->create_one( [ "chr.name" => 1, "chr.start" => 1, "chr.end" => 1 ] );
     }
 
-    $stopwatch->block_message( check_coll( $db, 'chromosome', '_id' ) );
-    $stopwatch->block_message( check_coll( $db, 'sequence',   '_id' ) );
-    $stopwatch->block_message( check_coll( $db, 'align',      '_id' ) );
+    $stopwatch->block_message( check_coll( $db, 'chr',   '_id' ) );
+    $stopwatch->block_message( check_coll( $db, 'align', 'chr._id' ) );
 }
 
 $stopwatch->end_message( "All files have been processed.", "duration" );

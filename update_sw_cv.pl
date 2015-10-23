@@ -79,30 +79,8 @@ my @jobs;
         query_timeout => -1,
     )->get_database($dbname);
 
-    @jobs = $db->get_collection('align')->find->all;
-    printf "There are [%d] aligns totally.\n", scalar @jobs;
-
-    # pre-allocate disk space
-    print "Init disk space\n";
-    $db->get_collection('ofgsw')->update_many(
-        { gc_cv => { '$exists' => 0, } },
-        {   '$set' => {
-                gc_mean => undef,
-                gc_cv   => undef,
-                gc_std  => undef,
-            }
-        },
-    );
-
-    $db->get_collection('gsw')->update_many(
-        { gc_cv => { '$exists' => 0, } },
-        {   '$set' => {
-                gc_mean => undef,
-                gc_cv   => undef,
-                gc_std  => undef,
-            }
-        },
-    );
+    @jobs = $db->get_collection('align')->find->fields( { _id => 1 } )->all;
+    printf "There are [%d] jobs totally.\n", scalar @jobs;
 }
 
 #----------------------------------------------------------#
@@ -110,7 +88,7 @@ my @jobs;
 #----------------------------------------------------------#
 my $worker = sub {
     my ( $self, $chunk_ref, $chunk_id ) = @_;
-    my @aligns = @{$chunk_ref};
+    my @jobs = @{$chunk_ref};
 
     my $wid = MCE->wid;
 
@@ -124,7 +102,6 @@ my $worker = sub {
         query_timeout => -1,
     )->get_database($dbname);
 
-    my $coll_seq   = $db->get_collection('sequence');
     my $coll_ofgsw = $db->get_collection('ofgsw');
     my $coll_gsw   = $db->get_collection('gsw');
 
@@ -135,26 +112,25 @@ my $worker = sub {
         skip_mdcw        => 1,
     );
 
-    for my $align (@aligns) {
-        my $chr_name  = $align->{chr_name};
-        my $chr_start = $align->{chr_start};
-        my $chr_end   = $align->{chr_end};
-        printf "Process align %s:%s-%s\n", $chr_name, $chr_start, $chr_end;
+    my $coll_align = $db->get_collection('align');
+    for my $job (@jobs) {
+        my $align = $coll_align->find_one( { _id => $job->{_id} } );
+        printf "Process align %s:%s-%s\n", $align->{chr}{name}, $align->{chr}{start},
+            $align->{chr}{end};
 
-        my $seq = $coll_seq->find_one( { _id => $align->{seq_id} } )->{seq};
         my $align_set = AlignDB::IntSpan->new( "1-" . $align->{length} );
 
         #----------------------------#
         # ofgsw
         #----------------------------#
-        my @ofgsws = $coll_ofgsw->find( { align_id => $align->{_id} } )->all;
+        my @ofgsws = $coll_ofgsw->find( { "align._id" => $align->{_id} } )->all;
         printf "    Updating %d ofgsws\n", scalar @ofgsws;
         my %stat_ofgsw_of;
 
         #----------------------------#
         # gsw
         #----------------------------#
-        my @gsws = $coll_gsw->find( { align_id => $align->{_id} } )->all;
+        my @gsws = $coll_gsw->find( { "align._id" => $align->{_id} } )->all;
         printf "    Updating %d gsws\n", scalar @gsws;
         my %stat_gsw_of;
 
@@ -162,10 +138,8 @@ my $worker = sub {
         # calc
         #----------------------------#
         for my $ofgsw (@ofgsws) {
-            my $window_set = AlignDB::IntSpan->new(
-                $ofgsw->{align_start} . '-' . $ofgsw->{align_end} );
-            my $resize_set
-                = center_resize( $window_set, $align_set, $stat_segment_size );
+            my $window_set = AlignDB::IntSpan->new( $ofgsw->{align}{runlist} );
+            my $resize_set = center_resize( $window_set, $align_set, $stat_segment_size );
 
             if ( !$resize_set ) {
                 print "    Can't resize window!\n";
@@ -173,18 +147,18 @@ my $worker = sub {
             }
 
             my ( $gc_mean, $gc_std, $gc_cv, $gc_mdcw )
-                = $obj->segment_gc_stat( [$seq], $resize_set );
+                = $obj->segment_gc_stat( [ $align->{seq} ], $resize_set );
 
             $stat_ofgsw_of{ $ofgsw->{_id} } = {
-                gc_mean => $gc_mean,
-                gc_cv   => $gc_cv,
-                gc_std  => $gc_std,
+                "gc.mean" => $gc_mean,
+                "gc.cv"   => $gc_cv,
+                "gc.std"  => $gc_std,
             };
         }
+
         for my $gsw (@gsws) {
-            my $window_set = AlignDB::IntSpan->new( $gsw->{align_runlist} );
-            my $resize_set
-                = center_resize( $window_set, $align_set, $stat_segment_size );
+            my $window_set = AlignDB::IntSpan->new( $gsw->{align}{runlist} );
+            my $resize_set = center_resize( $window_set, $align_set, $stat_segment_size );
 
             if ( !$resize_set ) {
                 print "    Can't resize window!\n";
@@ -192,12 +166,12 @@ my $worker = sub {
             }
 
             my ( $gc_mean, $gc_std, $gc_cv, $gc_mdcw )
-                = $obj->segment_gc_stat( [$seq], $resize_set );
+                = $obj->segment_gc_stat( [ $align->{seq} ], $resize_set );
 
             $stat_gsw_of{ $gsw->{_id} } = {
-                gc_mean => $gc_mean,
-                gc_cv   => $gc_cv,
-                gc_std  => $gc_std,
+                "gc.mean" => $gc_mean,
+                "gc.cv"   => $gc_cv,
+                "gc.std"  => $gc_std,
             };
         }
 
@@ -235,8 +209,8 @@ $mce->forchunk( \@jobs, $worker, );
         port          => $port,
         query_timeout => -1,
     )->get_database($dbname);
-    $stopwatch->block_message( check_coll( $db, 'ofgsw', 'gc_cv' ) );
-    $stopwatch->block_message( check_coll( $db, 'gsw',   'gc_cv' ) );
+    $stopwatch->block_message( check_coll( $db, 'ofgsw', 'gc.cv' ) );
+    $stopwatch->block_message( check_coll( $db, 'gsw',   'gc.cv' ) );
 }
 
 $stopwatch->end_message;
