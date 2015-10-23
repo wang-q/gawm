@@ -26,7 +26,7 @@ use MyUtil qw(read_fasta check_coll);
 #----------------------------------------------------------#
 # GetOpt section
 #----------------------------------------------------------#
-my $Config = Config::Tiny->read("$FindBin::Bin/config.ini");
+my $Config = Config::Tiny->read("$FindBin::RealBin/config.ini");
 
 # record ARGV and Config
 my $stopwatch = AlignDB::Stopwatch->new(
