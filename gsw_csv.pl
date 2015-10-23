@@ -47,7 +47,7 @@ GetOptions(
     'server=s' => \( my $server = $Config->{database}{server} ),
     'port=i'   => \( my $port   = $Config->{database}{port} ),
     'db|d=s'   => \( my $dbname = $Config->{database}{db} ),
-    'output|o=i' => \( my $outfile ),
+    'output|o=i' => \my $outfile,
 ) or HelpMessage(1);
 
 $outfile = "$dbname.gsw.csv" unless $outfile;

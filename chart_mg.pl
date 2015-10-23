@@ -29,7 +29,7 @@ chart_mg.pl - Use Win32::OLE to automate Excel chart
 
 =head1 SYNOPSIS
 
-    perl chart_mg.pl [options]
+    perl chart_mg.pl -i <file> [options]
       Options:
         --help            brief help message
         --man             full documentation
@@ -40,13 +40,13 @@ chart_mg.pl - Use Win32::OLE to automate Excel chart
 
 GetOptions(
     'help|?'      => sub { HelpMessage(0) },
-    'infile|i=s'  => \( my $infile ),
-    'outfile|o=s' => \( my $outfile ),
+    'infile|i=s'  => \my $infile,
+    'outfile|o=s' => \my $outfile,
     'jc=s'              => \( my $jc_correction   = $Config->{stat}{jc_correction} ),
     'time_stamp=s'      => \( my $time_stamp      = $Config->{stat}{time_stamp} ),
     'add_index_sheet=s' => \( my $add_index_sheet = $Config->{stat}{add_index_sheet} ),
-    'replace=s'         => \( my %replace ),
-    'add_trend=s'       => \( my $add_trend ),
+    'replace=s'         => \my %replace,
+    'add_trend=s'       => \my $add_trend,
 ) or HelpMessage(1);
 
 # die unless we got the mandatory argument
