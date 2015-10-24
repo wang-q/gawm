@@ -122,9 +122,9 @@ my $worker_insert = sub {
         }
 
         my $align = $coll_align->find_one(
-            {   chr_name  => $chr,
-                chr_start => { '$lte' => $start },
-                chr_end   => { '$gte' => $end }
+            {   'chr.name'  => $chr,
+                'chr.start' => { '$lte' => $start },
+                'chr.end'   => { '$gte' => $end }
             }
         );
         if ( !$align ) {
@@ -133,10 +133,13 @@ my $worker_insert = sub {
         }
         push @beds,
             {
-            align_id  => $align->{_id},
-            chr_name  => $chr,
-            chr_start => $start,
-            chr_end   => $end,
+            align => { _id => $align->{_id}, },
+            chr   => {
+                name    => $chr,
+                start   => $start,
+                end     => $end,
+                runlist => AlignDB::IntSpan->new->add_range( $start, $end )->runlist,
+            },
             };
     }
     close $data_fh;
@@ -152,7 +155,7 @@ my $worker_insert = sub {
 
 my $worker_count = sub {
     my ( $self, $chunk_ref, $chunk_id ) = @_;
-    my @aligns = @{$chunk_ref};
+    my @jobs = @{$chunk_ref};
 
     my $wid = MCE->wid;
 
@@ -166,28 +169,35 @@ my $worker_count = sub {
         query_timeout => -1,
     )->get_database($dbname);
 
+    my $coll_align = $db->get_collection('align');
     my $coll_gsw   = $db->get_collection('gsw');
     my $coll_ofgsw = $db->get_collection('ofgsw');
     my $coll_bed   = $db->get_collection('bed');
-    for my $align (@aligns) {
-        printf "Process align %s:%s-%s\n", $align->{chr_name}, $align->{chr_start},
-            $align->{chr_end};
+
+    for my $job (@jobs) {
+        my $align = $coll_align->find_one( { _id => $job->{_id} } );
+        if ( !defined $align ) {
+            printf "Can't find align for %s\n", $job->{_id};
+            next;
+        }
+
+        printf "Process align %s:%s-%s\n", $align->{chr}{name}, $align->{chr}{start},
+            $align->{chr}{end};
 
         # all beds in this align
-        my @beds = $coll_bed->find( { align_id => $align->{_id} } )->all;
+        my @beds = $coll_bed->find( { 'align._id' => $align->{_id} } )->all;
         next unless @beds;
         printf "    %d beds in this align\n", scalar @beds;
         my $bed_chr_set = AlignDB::IntSpan->new;
         for (@beds) {
-            $bed_chr_set->add_range( $_->{chr_start}, $_->{chr_end} );
+            $bed_chr_set->add_runlist( $_->{chr}{runlist} );
         }
 
         # all gsws in this align
-        my @gsws = $coll_gsw->find( { align_id => $align->{_id} } )->all;
-        printf "    %d gsws in this align\n", scalar @gsws;
+        my @gsws = $coll_gsw->find( { 'align._id' => $align->{_id} } )->all;
         my %gsw_count_of;
         for my $gsw (@gsws) {
-            next if $bed_chr_set->intersect( $gsw->{runlist} )->is_empty;
+            next if $bed_chr_set->intersect( $gsw->{chr}{runlist} )->is_empty;
 
             my $count = count_bed_in_sw( $coll_bed, $align->{_id}, $gsw );
 
@@ -195,17 +205,17 @@ my $worker_count = sub {
                 $gsw_count_of{ $gsw->{_id} } = $count;
             }
             else {
-                printf "gsw %s matching wrong\n", $gsw->{runlist};
+                printf "gsw %s matching wrong\n", $gsw->{chr}{runlist};
             }
         }
+        printf "    %d gsws in this align, %d overlapping with beds\n", scalar @gsws,
+            scalar keys %gsw_count_of;
 
-        # all gsws in this align
-        my @ofgsws = $coll_ofgsw->find( { align_id => $align->{_id} } )->all;
-        printf "    %d ofgsws in this align\n", scalar @ofgsws;
+        # all ofgsw in this align
+        my @ofgsws = $coll_ofgsw->find( { 'align._id' => $align->{_id} } )->all;
         my %ofgsw_count_of;
         for my $ofgsw (@ofgsws) {
-            my $ofgsw_set = AlignDB::IntSpan->new( $ofgsw->{chr_start} . '-' . $ofgsw->{chr_end} );
-            next if $bed_chr_set->intersect($ofgsw_set)->is_empty;
+            next if $bed_chr_set->intersect( $ofgsw->{chr}{runlist} )->is_empty;
 
             my $count = count_bed_in_sw( $coll_bed, $align->{_id}, $ofgsw );
 
@@ -213,9 +223,11 @@ my $worker_count = sub {
                 $ofgsw_count_of{ $ofgsw->{_id} } = $count;
             }
             else {
-                printf "ofgsw %s matching wrong\n", $ofgsw->{runlist};
+                printf "ofgsw %s matching wrong\n", $ofgsw->{chr}{runlist};
             }
         }
+        printf "    %d ofgsws in this align, %d overlapping with beds\n", scalar @ofgsws,
+            scalar keys %ofgsw_count_of;
 
         for my $key ( keys %gsw_count_of ) {
             $coll_gsw->update_one(
@@ -248,7 +260,7 @@ if ( $run eq "all" or $run eq "insert" ) {
     $mce->foreach( \@files, $worker_insert, );    # foreach implies chunk_size => 1.
 
     my $indexes = $coll->indexes;
-    $indexes->create_one( [ align_id => 1 ] );
+    $indexes->create_one( [ 'align._id' => 1 ] );
     $indexes->create_one( [ chr_name => 1, chr_start => 1, chr_end => 1 ] );
 
     $stopwatch->block_message( check_coll( $db, 'bed', '_id' ) );
@@ -261,11 +273,10 @@ if ( $run eq "all" or $run eq "count" ) {
         query_timeout => -1,
     )->get_database($dbname);
 
-    my $coll   = $db->get_collection('align');
-    my @aligns = $coll->find->all;
+    my @jobs = $db->get_collection('align')->find->fields( { _id => 1 } )->all;
 
     my $mce = MCE->new( max_workers => $parallel, chunk_size => $batch_number, );
-    $mce->forchunk( \@aligns, $worker_count, );
+    $mce->forchunk( \@jobs, $worker_count, );
 
     $stopwatch->block_message( check_coll( $db, 'gsw',   'bed_count' ) );
     $stopwatch->block_message( check_coll( $db, 'ofgsw', 'bed_count' ) );
@@ -281,35 +292,35 @@ sub count_bed_in_sw {
     my $sw       = shift;
 
     my $count = $coll->find(
-        {   'align_id' => $align_id,
-            '$or'      => [
+        {   'align._id' => $align_id,
+            '$or'       => [
 
                 # bed    |----|
                 # sw  |----|
-                {   'chr_start' => {
-                        '$gte' => $sw->{chr_start},
-                        '$lte' => $sw->{chr_end},
+                {   'chr.start' => {
+                        '$gte' => $sw->{chr}{start},
+                        '$lte' => $sw->{chr}{end},
                     }
                 },
 
                 # bed |----|
                 # sw    |----|
-                {   'chr_end' => {
-                        '$gte' => $sw->{chr_start},
-                        '$lte' => $sw->{chr_end},
+                {   'chr.end' => {
+                        '$gte' => $sw->{chr}{start},
+                        '$lte' => $sw->{chr}{end},
                     }
                 },
 
                 # bed |--------|
                 # sw    |----|
-                {   'chr_start' => { '$lte' => $sw->{chr_start}, },
-                    'chr_end'   => { '$gte' => $sw->{chr_end}, }
+                {   'chr.start' => { '$lte' => $sw->{chr}{start}, },
+                    'chr.end'   => { '$gte' => $sw->{chr}{end}, }
                 },
 
                 # bed   |----|
                 # sw  |--------|
-                {   'chr_start' => { '$gte' => $sw->{chr_start}, },
-                    'chr_end'   => { '$lte' => $sw->{chr_end}, }
+                {   'chr.start' => { '$gte' => $sw->{chr}{start}, },
+                    'chr.end'   => { '$lte' => $sw->{chr}{end}, }
                 },
             ]
         }

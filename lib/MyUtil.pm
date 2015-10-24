@@ -15,7 +15,7 @@ use vars qw(@ISA @EXPORT_OK %EXPORT_TAGS);
 %EXPORT_TAGS = (
     all => [
         qw{
-            center_resize check_coll read_fasta calc_gc_ratio
+            center_resize check_coll read_fasta calc_gc_ratio process_message
             },
     ],
 );
@@ -143,6 +143,24 @@ sub mean {
     return unless @_;
     return $_[0] unless @_ > 1;
     return sum(@_) / scalar(@_);
+}
+
+sub process_message {
+    my $db       = shift;
+    my $align_id = shift;
+
+    my $coll_align = $db->get_collection('align');
+    my $align = $coll_align->find_one( { _id => $align_id } );
+    if ( !defined $align ) {
+        printf "Can't find align for %s\n", $align_id;
+        return;
+    }
+
+    printf "Process align %s(%s):%s-%s\n", $align->{chr}{name}, $align->{chr}{strand},
+        $align->{chr}{start},
+        $align->{chr}{end};
+
+    return $align;
 }
 
 1;

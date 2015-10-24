@@ -179,7 +179,7 @@ $mce->forchunk( \@jobs, $worker, );
         my $indexes = $coll->indexes;
         $indexes->create_one( [ 'align._id' => 1 ] );
         $indexes->create_one( [ prev_id     => 1 ] );
-        $indexes->create_one( [ "chr.name"  => 1, "chr.start" => 1, "chr.end" => 1 ] );
+        $indexes->create_one( [ 'chr.name'  => 1, 'chr.start' => 1, 'chr.end' => 1 ] );
         $indexes->create_one( [ type        => 1 ] );
     }
 
@@ -191,7 +191,7 @@ $mce->forchunk( \@jobs, $worker, );
         $indexes->create_one( [ 'align._id'          => 1 ] );
         $indexes->create_one( [ 'gce._id'            => 1 ] );
         $indexes->create_one( [ 'gce.prev_id'        => 1 ] );
-        $indexes->create_one( [ "chr.name"           => 1, "chr.start" => 1, "chr.end" => 1 ] );
+        $indexes->create_one( [ 'chr.name'           => 1, 'chr.start' => 1, 'chr.end' => 1 ] );
         $indexes->create_one( [ type                 => 1 ] );
         $indexes->create_one( [ 'gce.distance'       => 1 ] );
         $indexes->create_one( [ 'gce.distance_crest' => 1 ] );

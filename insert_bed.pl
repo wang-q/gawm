@@ -23,7 +23,7 @@ use AlignDB::Window;
 use AlignDB::Stopwatch;
 
 use lib "$FindBin::RealBin/lib";
-use MyUtil qw(center_resize check_coll calc_gc_ratio);
+use MyUtil qw(process_message check_coll center_resize calc_gc_ratio);
 
 #----------------------------------------------------------#
 # GetOpt section
@@ -118,7 +118,6 @@ my $worker_insert = sub {
     )->get_database($dbname);
 
     my $coll_align = $db->get_collection('align');
-    my $coll_seq   = $db->get_collection('sequence');
 
     my @beds;
     open my $data_fh, '<', $file;
@@ -140,9 +139,9 @@ my $worker_insert = sub {
         }
 
         my $align = $coll_align->find_one(
-            {   chr_name  => $chr,
-                chr_start => { '$lte' => $start },
-                chr_end   => { '$gte' => $end }
+            {   'chr.name'  => $chr,
+                'chr.start' => { '$lte' => $start },
+                'chr.end'   => { '$gte' => $end }
             }
         );
         if ( !$align ) {
@@ -150,25 +149,30 @@ my $worker_insert = sub {
             next;
         }
         else {
-            my $seq             = $coll_seq->find_one( { _id => $align->{seq_id} } )->{seq};
             my $length          = $end - $start + 1;
-            my $ofg_align_start = $start - $align->{chr_start} + 1;
-            my $ofg_align_end   = $end - $align->{chr_start} + 1;
-            my $ofg_seq         = substr $seq, $ofg_align_start - 1, $length;
+            my $ofg_align_start = $start - $align->{chr}{start} + 1;
+            my $ofg_align_end   = $end - $align->{chr}{start} + 1;
+            my $ofg_seq         = substr $align->{seq}, $ofg_align_start - 1, $length;
             my $ofg_gc          = calc_gc_ratio($ofg_seq);
             push @beds,
                 {
-                align_id    => $align->{_id},
-                chr_name    => $chr,
-                chr_start   => $start,
-                chr_end     => $end,
-                length      => $length,
-                runlist     => AlignDB::IntSpan->new("$start-$end")->runlist,
-                align_start => $ofg_align_start,
-                align_end   => $ofg_align_end,
-                gc          => $ofg_gc,
-                tag         => $tag,
-                type        => $type,
+                align => {
+                    _id     => $align->{_id},
+                    start   => $ofg_align_start,
+                    end     => $ofg_align_end,
+                    runlist => AlignDB::IntSpan->new->add_range( $ofg_align_start, $ofg_align_end )
+                        ->runlist,
+                },
+                chr => {
+                    name    => $chr,
+                    start   => $start,
+                    end     => $end,
+                    runlist => AlignDB::IntSpan->new->add_range( $start, $end )->runlist,
+                },
+                length => $length,
+                gc     => $ofg_gc,
+                tag    => $tag,
+                type   => $type,
                 };
         }
     }
@@ -185,7 +189,7 @@ my $worker_insert = sub {
 
 my $worker_sw = sub {
     my ( $self, $chunk_ref, $chunk_id ) = @_;
-    my @aligns = @{$chunk_ref};
+    my @jobs = @{$chunk_ref};
 
     my $wid = MCE->wid;
 
@@ -199,7 +203,6 @@ my $worker_sw = sub {
         query_timeout => -1,
     )->get_database($dbname);
 
-    my $coll_seq   = $db->get_collection('sequence');
     my $coll_ofg   = $db->get_collection('ofg');
     my $coll_ofgsw = $db->get_collection('ofgsw');
 
@@ -215,20 +218,18 @@ my $worker_sw = sub {
         skip_mdcw        => 1,
     );
 
-    for my $align (@aligns) {
-        printf "Process align %s:%s-%s\n", $align->{chr_name}, $align->{chr_start},
-            $align->{chr_end};
+    for my $job (@jobs) {
+        my $align = process_message( $db, $job->{_id} );
+        next unless $align;
 
-        my @align_ofgs
-            = $coll_ofg->find( { align_id => $align->{_id} } )->all;
+        my @align_ofgs = $coll_ofg->find( { 'align._id' => $align->{_id} } )->all;
         if ( @align_ofgs == 0 ) {
             warn "No ofgs in this align\n";
             next;
         }
         printf "    Find %d ofgs in this align\n", scalar @align_ofgs;
 
-        my $seq = $coll_seq->find_one( { _id => $align->{seq_id} } )->{seq};
-        my $align_set = AlignDB::IntSpan->new( "1-" . $align->{length} );
+        my $align_set = AlignDB::IntSpan->new->add_range( 1, $align->{length} );
 
         #----------------------------#
         # ofgsw
@@ -242,51 +243,58 @@ my $worker_sw = sub {
         for my $ofg (@align_ofgs) {
             my @rsws;
             if ( $style eq 'center_intact' ) {
-                @rsws = $window_maker->center_intact_window( $align_set,
-                    $ofg->{align_start}, $ofg->{align_end} );
+                @rsws = $window_maker->center_intact_window(
+                    $align_set,
+                    $ofg->{align}{start},
+                    $ofg->{align}{end}
+                );
             }
             elsif ( $style eq 'center' ) {
-                @rsws = $window_maker->center_window( $align_set,
-                    $ofg->{align_start}, $ofg->{align_end} );
+                @rsws = $window_maker->center_window(
+                    $align_set,
+                    $ofg->{align}{start},
+                    $ofg->{align}{end}
+                );
             }
 
             my @ofgsws;
             for my $rsw (@rsws) {
                 my $ofgsw = {
-                    chr_name => $align->{chr_name},
-                    align_id => $align->{_id},
-                    ofg_id   => $ofg->{_id},
-                    type     => $rsw->{type},
-                    distance => $rsw->{distance},
+                    chr => {
+                        name  => $align->{chr}{name},
+                        start => $rsw->{set}->min + $align->{chr}{start} - 1,
+                        end   => $rsw->{set}->max + $align->{chr}{start} - 1,
+                    },
+                    align => {
+                        _id   => $align->{_id},
+                        start => $rsw->{set}->min,
+                        end   => $rsw->{set}->max,
+                    },
+                    ofg => {
+                        _id      => $ofg->{_id},
+                        tag      => $ofg->{tag},
+                        type     => $ofg->{type},
+                        distance => $rsw->{distance},
+                    },
+                    type   => $rsw->{type},
+                    length => $rsw->{set}->size,
                 };
-                $ofgsw->{length}    = $rsw->{set}->size;
-                $ofgsw->{chr_start} = $rsw->{set}->min + $align->{chr_start} - 1;
-                $ofgsw->{chr_end}   = $rsw->{set}->max + $align->{chr_start} - 1;
+                $ofgsw->{chr}{runlist}
+                    = AlignDB::IntSpan->new->add_range( $ofgsw->{chr}{start}, $ofgsw->{chr}{end} )
+                    ->runlist;
+                $ofgsw->{align}{runlist}
+                    = AlignDB::IntSpan->new->add_range( $ofgsw->{align}{start},
+                    $ofgsw->{align}{end} )->runlist;
 
-                my $ofgsw_seq = substr $seq, $rsw->{set}->min - 1, $ofgsw->{length};
-                $ofgsw->{gc} = calc_gc_ratio($ofgsw_seq);
-
+                # pre allocate
                 $ofgsw->{bed_count} = 0;
-                $ofgsw->{ofg}       = {
-                    tag  => $ofg->{tag},
-                    type => $ofg->{type},
+                my $ofgsw_seq = substr $align->{seq}, $rsw->{set}->min - 1, $ofgsw->{length};
+                $ofgsw->{gc} = {
+                    gc   => calc_gc_ratio($ofgsw_seq),
+                    mean => 0.0,
+                    cv   => 0.0,
+                    std  => 0.0,
                 };
-
-                # gsw cv
-                my $resize_set = center_resize( $rsw->{set}, $align_set, $stat_segment_size );
-                if ( !$resize_set ) {
-                    print "    Can't resize window!\n";
-                    $ofgsw->{gc_mean} = undef;
-                    $ofgsw->{gc_cv}   = undef;
-                    $ofgsw->{gc_std}  = undef;
-                }
-                else {
-                    my ( $gc_mean, $gc_std, $gc_cv, $gc_mdcw )
-                        = $obj->segment_gc_stat( [$seq], $resize_set );
-                    $ofgsw->{gc_mean} = $gc_mean;
-                    $ofgsw->{gc_cv}   = $gc_cv;
-                    $ofgsw->{gc_std}  = $gc_std;
-                }
 
                 push @ofgsws, $ofgsw;
             }
@@ -321,10 +329,10 @@ my $worker_sw = sub {
 
     $stopwatch->block_message("Indexing $name");
     my $indexes = $coll->indexes;
-    $indexes->create_one( [ align_id => 1 ] );
-    $indexes->create_one( [ chr_name => 1, chr_start => 1, chr_end => 1 ] );
-    $indexes->create_one( [ tag      => 1 ] );
-    $indexes->create_one( [ type     => 1 ] );
+    $indexes->create_one( [ 'align._id' => 1 ] );
+    $indexes->create_one( [ 'chr.name'  => 1, 'chr.start' => 1, 'chr.end' => 1 ] );
+    $indexes->create_one( [ tag         => 1 ] );
+    $indexes->create_one( [ type        => 1 ] );
 
     $stopwatch->block_message( check_coll( $db, $name, '_id' ) );
 }
@@ -338,8 +346,7 @@ my $worker_sw = sub {
     )->get_database($dbname);
 
     # get aligns
-    my $coll_align = $db->get_collection('align');
-    my @jobs       = $coll_align->find->all;
+    my @jobs = $db->get_collection('align')->find->fields( { _id => 1 } )->all;
 
     # insert ofgsw
     my $name = "ofgsw";
@@ -352,11 +359,11 @@ my $worker_sw = sub {
     # indexing
     $stopwatch->block_message("Indexing $name");
     my $indexes = $coll->indexes;
-    $indexes->create_one( [ align_id => 1 ] );
-    $indexes->create_one( [ ofg_id   => 1 ] );
-    $indexes->create_one( [ chr_name => 1, chr_start => 1, chr_end => 1 ] );
-    $indexes->create_one( [ type     => 1 ] );
-    $indexes->create_one( [ distance => 1 ] );
+    $indexes->create_one( [ 'align._id'    => 1 ] );
+    $indexes->create_one( [ 'ofg._id'      => 1 ] );
+    $indexes->create_one( [ 'chr.name'     => 1, 'chr.start' => 1, 'chr.end' => 1 ] );
+    $indexes->create_one( [ type           => 1 ] );
+    $indexes->create_one( [ 'ofg.distance' => 1 ] );
     $indexes->create_one( { 'ofg.tag'  => 1 } );
     $indexes->create_one( { 'ofg.type' => 1 } );
 

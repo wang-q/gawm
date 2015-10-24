@@ -100,10 +100,10 @@ my $cursor = $coll->find;
 #my $cursor = $coll->find( { chr_name => 'chr1' } );
 while ( my $object = $cursor->next ) {
     print {$fh} join( ",",
-        $object->{distance},  $object->{distance_crest},
-        $object->{gc},        $object->{gc_cv},
-        $object->{trough_gc}, $object->{crest_gc},
-        $object->{gradient},  $object->{bed_count},
+        $object->{gce}{distance},  $object->{gce}{distance_crest},
+        $object->{gc}{gc},         $object->{gc}{cv},
+        $object->{gce}{trough_gc}, $object->{gce}{crest_gc},
+        $object->{gce}{gradient},  $object->{bed_count},
         $object->{bed_count} > 0 ? 1 : 0, ),
         "\n";
 }

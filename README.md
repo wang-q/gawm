@@ -39,7 +39,7 @@ cd ~/Scripts/gawm
 
 mongo S288c_spo11 --eval "db.dropDatabase();"
 
-perl gen_mg.pl -d S288c_spo11 -n S288c --dir ~/data/alignment/yeast_combine/S288C  --length 10000000 --parallel 4
+perl gen_mg.pl -d S288c_spo11 -n S288c --dir ~/data/alignment/yeast_combine/S288C --parallel 1
 
 perl insert_bed.pl -d S288c_spo11 -tag spo11 -f ~/Scripts/alignDB/ofg/spo11/spo11_hot.bed --batch 1 --parallel 4
 
