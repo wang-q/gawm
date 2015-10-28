@@ -47,8 +47,6 @@ my $stat_segment_size = $Config->{gc}{stat_segment_size};
 my $stat_window_size  = $Config->{gc}{stat_window_size};
 my $stat_window_step  = $Config->{gc}{stat_window_step};
 
-=cut
-
 =head1 NAME
 
 insert_bed.pl - Add bed files to ofg and generate ofgsw.
