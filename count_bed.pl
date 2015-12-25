@@ -110,9 +110,8 @@ my $worker_insert = sub {
         my ( $chr, $start, $end )
             = ( split /\t/, $string )[ 0, 1, 2 ];
         next unless $chr =~ /^\w+$/;
-        if ( !$nochr ) {
+        if ( $nochr ) {
             $chr =~ s/chr0?//i;
-            $chr = "chr$chr";
         }
         next unless $start =~ /^\d+$/;
         next unless $end =~ /^\d+$/;
