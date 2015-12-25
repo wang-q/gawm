@@ -88,39 +88,67 @@ my $distance_to_trough = sub {
         return;
     }
 
+    my @names = qw{_id AVG_gc AVG_cv AVG_bed COUNT};
+    my $data = [ [], [], [], [], [] ];
+
     {    # write header
-        my @headers = qw{ distance_to_trough AVG_gc AVG_cv AVG_bed COUNT };
         ( $sheet_row, $sheet_col ) = ( 0, 0 );
         my %option = (
             sheet_row => $sheet_row,
             sheet_col => $sheet_col,
-            header    => \@headers,
+            header    => \@names,
         );
         ( $sheet, $sheet_row ) = $write_obj->write_header_direct( $sheet_name, \%option );
     }
 
-    my @docs = $coll->aggregate(
-        [   { '$match' => { 'gce.distance' => { '$lte' => 20 } } },
-            {   '$group' => {
-                    '_id'       => '$gce.distance',
-                    'avg_gc'    => { '$avg' => '$gc.gc' },
-                    'avg_gc_cv' => { '$avg' => '$gc.cv' },
-                    'avg_bed'   => { '$avg' => '$bed_count' },
-                    'count'     => { '$sum' => 1 },
-                }
-            },
-            { '$sort' => { _id => 1 } },
-        ]
-    )->all;
-    for (@docs) {
-        my @row = ( $_->{_id}, $_->{avg_gc}, $_->{avg_gc_cv}, $_->{avg_bed}, $_->{count}, );
-        ($sheet_row) = $write_obj->write_row_direct(
-            $sheet,
-            {   row       => \@row,
-                sheet_row => $sheet_row,
-                sheet_col => $sheet_col,
+    {    # write data
+        my @docs = $coll->aggregate(
+            [   { '$match' => { 'gce.distance' => { '$lte' => 15 } } },
+                {   '$group' => {
+                        $names[0] => '$gce.distance',
+                        $names[1] => { '$avg' => '$gc.gc' },
+                        $names[2] => { '$avg' => '$gc.cv' },
+                        $names[3] => { '$avg' => '$bed_count' },
+                        $names[4] => { '$sum' => 1 },
+                    }
+                },
+                { '$sort' => { $names[0] => 1 } },
+            ]
+        )->all;
+        for my $row (@docs) {
+            for my $i ( 0 .. $#names ) {
+                push @{ $data->[$i] }, $row->{ $names[$i] };
             }
+        }
+        $sheet->write( $sheet_row, 0, $data, $write_obj->format->{NORMAL} );
+    }
+
+    {    # chart
+        my %option = (
+            x_column    => 0,
+            y_column    => 1,
+            first_row   => 1,
+            last_row    => 16,
+            x_max_scale => 15,
+            y_data      => $data->[1],
+            x_title     => "Distance to GC troughs",
+            y_title     => "Window GC",
+            top         => 1,
+            left        => 6,
         );
+        $write_obj->draw_y( $sheet, \%option );
+
+        $option{y_column} = 2;
+        $option{y_title}  = "Window CV";
+        $option{top} += 18;
+        $option{y_data} = $data->[2];
+        $write_obj->draw_y( $sheet, \%option );
+
+        $option{y_column} = 3;
+        $option{y_title}  = "BED count";
+        $option{top} += 18;
+        $option{y_data} = $data->[3];
+        $write_obj->draw_y( $sheet, \%option );
     }
 
     print "Sheet \"$sheet_name\" has been generated.\n";
@@ -142,39 +170,67 @@ my $distance_to_crest = sub {
         return;
     }
 
+    my @names = qw{_id AVG_gc AVG_cv AVG_bed COUNT};
+    my $data = [ [], [], [], [], [] ];
+
     {    # write header
-        my @headers = qw{ distance_to_crest AVG_gc AVG_cv AVG_bed COUNT };
         ( $sheet_row, $sheet_col ) = ( 0, 0 );
         my %option = (
             sheet_row => $sheet_row,
             sheet_col => $sheet_col,
-            header    => \@headers,
+            header    => \@names,
         );
         ( $sheet, $sheet_row ) = $write_obj->write_header_direct( $sheet_name, \%option );
     }
 
-    my @docs = $coll->aggregate(
-        [   { '$match' => { 'gce.distance_crest' => { '$lte' => 20 } } },
-            {   '$group' => {
-                    '_id'       => '$gce.distance_crest',
-                    'avg_gc'    => { '$avg' => '$gc.gc' },
-                    'avg_gc_cv' => { '$avg' => '$gc.cv' },
-                    'avg_bed'   => { '$avg' => '$bed_count' },
-                    'count'     => { '$sum' => 1 },
-                }
-            },
-            { '$sort' => { _id => 1 } },
-        ]
-    )->all;
-    for (@docs) {
-        my @row = ( $_->{_id}, $_->{avg_gc}, $_->{avg_gc_cv}, $_->{avg_bed}, $_->{count}, );
-        ($sheet_row) = $write_obj->write_row_direct(
-            $sheet,
-            {   row       => \@row,
-                sheet_row => $sheet_row,
-                sheet_col => $sheet_col,
+    {    # write data
+        my @docs = $coll->aggregate(
+            [   { '$match' => { 'gce.distance_crest' => { '$lte' => 15 } } },
+                {   '$group' => {
+                        $names[0] => '$gce.distance_crest',
+                        $names[1] => { '$avg' => '$gc.gc' },
+                        $names[2] => { '$avg' => '$gc.cv' },
+                        $names[3] => { '$avg' => '$bed_count' },
+                        $names[4] => { '$sum' => 1 },
+                    }
+                },
+                { '$sort' => { $names[0] => 1 } },
+            ]
+        )->all;
+        for my $row (@docs) {
+            for my $i ( 0 .. $#names ) {
+                push @{ $data->[$i] }, $row->{ $names[$i] };
             }
+        }
+        $sheet->write( $sheet_row, 0, $data, $write_obj->format->{NORMAL} );
+    }
+
+    {    # chart
+        my %option = (
+            x_column    => 0,
+            y_column    => 1,
+            first_row   => 1,
+            last_row    => 16,
+            x_max_scale => 15,
+            y_data      => $data->[1],
+            x_title     => "Distance to GC crests",
+            y_title     => "Window GC",
+            top         => 1,
+            left        => 6,
         );
+        $write_obj->draw_y( $sheet, \%option );
+
+        $option{y_column} = 2;
+        $option{y_title}  = "Window CV";
+        $option{top} += 18;
+        $option{y_data} = $data->[2];
+        $write_obj->draw_y( $sheet, \%option );
+
+        $option{y_column} = 3;
+        $option{y_title}  = "BED count";
+        $option{top} += 18;
+        $option{y_data} = $data->[3];
+        $write_obj->draw_y( $sheet, \%option );
     }
 
     print "Sheet \"$sheet_name\" has been generated.\n";
@@ -196,39 +252,67 @@ my $gradient = sub {
         return;
     }
 
+    my @names = qw{_id AVG_gc AVG_cv AVG_bed COUNT};
+    my $data = [ [], [], [], [], [] ];
+
     {    # write header
-        my @headers = qw{ gradient AVG_gc AVG_cv AVG_bed COUNT };
         ( $sheet_row, $sheet_col ) = ( 0, 0 );
         my %option = (
             sheet_row => $sheet_row,
             sheet_col => $sheet_col,
-            header    => \@headers,
+            header    => \@names,
         );
         ( $sheet, $sheet_row ) = $write_obj->write_header_direct( $sheet_name, \%option );
     }
 
-    my @docs = $coll->aggregate(
-        [   { '$match' => { 'gce.gradient' => { '$gte' => 1 } } },
-            {   '$group' => {
-                    '_id'       => '$gce.gradient',
-                    'avg_gc'    => { '$avg' => '$gc.gc' },
-                    'avg_gc_cv' => { '$avg' => '$gc.cv' },
-                    'avg_bed'   => { '$avg' => '$bed_count' },
-                    'count'     => { '$sum' => 1 },
-                }
-            },
-            { '$sort' => { _id => 1 } },
-        ]
-    )->all;
-    for (@docs) {
-        my @row = ( $_->{_id}, $_->{avg_gc}, $_->{avg_gc_cv}, $_->{avg_bed}, $_->{count}, );
-        ($sheet_row) = $write_obj->write_row_direct(
-            $sheet,
-            {   row       => \@row,
-                sheet_row => $sheet_row,
-                sheet_col => $sheet_col,
+    {    # write data
+        my @docs = $coll->aggregate(
+            [   { '$match' => { 'gce.gradient' => { '$gte' => 1, '$lte' => 40 } } },
+                {   '$group' => {
+                        $names[0] => '$gce.gradient',
+                        $names[1] => { '$avg' => '$gc.gc' },
+                        $names[2] => { '$avg' => '$gc.cv' },
+                        $names[3] => { '$avg' => '$bed_count' },
+                        $names[4] => { '$sum' => 1 },
+                    }
+                },
+                { '$sort' => { $names[0] => 1 } },
+            ]
+        )->all;
+        for my $row (@docs) {
+            for my $i ( 0 .. $#names ) {
+                push @{ $data->[$i] }, $row->{ $names[$i] };
             }
+        }
+        $sheet->write( $sheet_row, 0, $data, $write_obj->format->{NORMAL} );
+    }
+
+    {    # chart
+        my %option = (
+            x_column    => 0,
+            y_column    => 1,
+            first_row   => 1,
+            last_row    => 41,
+            x_max_scale => 40,
+            y_data      => $data->[1],
+            x_title     => "Gradient",
+            y_title     => "Window GC",
+            top         => 1,
+            left        => 6,
         );
+        $write_obj->draw_y( $sheet, \%option );
+
+        $option{y_column} = 2;
+        $option{y_title}  = "Window CV";
+        $option{top} += 18;
+        $option{y_data} = $data->[2];
+        $write_obj->draw_y( $sheet, \%option );
+
+        $option{y_column} = 3;
+        $option{y_title}  = "BED count";
+        $option{top} += 18;
+        $option{y_data} = $data->[3];
+        $write_obj->draw_y( $sheet, \%option );
     }
 
     print "Sheet \"$sheet_name\" has been generated.\n";
@@ -337,8 +421,8 @@ my $ofg_tag_type = sub {
             my ( $tag, $type ) = split /\-/, $bind;
             $condition = {
                 'ofg.distance' => { '$lte' => 20 },
-                'ofg.tag'  => $tag,
-                'ofg.type' => $type,
+                'ofg.tag'      => $tag,
+                'ofg.type'     => $type,
             };
         }
 
