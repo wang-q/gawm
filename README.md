@@ -16,17 +16,17 @@ cd ~/Scripts/gawm
 mongo S288c_gc --eval "db.dropDatabase();"
 
 # generate
-perl gen_mg.pl -d S288c_gc -n S288c --dir ~/data/alignment/yeast_combine/S288C --parallel 1
+perl gen_mg.pl -d S288c_gc -n S288c --dir ~/data/alignment/example/scer/Genomes/S288c --parallel 1
 
 # GC
-perl insert_gcwave.pl -d S288c_gc --batch 1 --parallel 4
+perl insert_gcwave.pl -d S288c_gc --batch 1 --parallel 8
 
 # CV
-perl update_sw_cv.pl -d S288c_gc --batch 1 --parallel 4
+perl update_sw_cv.pl -d S288c_gc --batch 1 --parallel 8
 
 # bed count
-perl count_bed.pl -d S288c_gc --run insert -f ~/Scripts/alignDB/ofg/spo11/spo11_hot.bed --batch 1 --parallel 1
-perl count_bed.pl -d S288c_gc --run count --batch 1 --parallel 4
+perl count_bed.pl -d S288c_gc --run insert -f doc/spo11_hot.bed --batch 1 --parallel 1
+perl count_bed.pl -d S288c_gc --run count --batch 1 --parallel 8
 
 # stats
 perl stat_mg.pl -d S288c_gc
