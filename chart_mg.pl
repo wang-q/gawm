@@ -45,8 +45,6 @@ GetOptions(
     'jc=s'              => \( my $jc_correction   = $Config->{stat}{jc_correction} ),
     'time_stamp=s'      => \( my $time_stamp      = $Config->{stat}{time_stamp} ),
     'add_index_sheet=s' => \( my $add_index_sheet = $Config->{stat}{add_index_sheet} ),
-    'replace=s'         => \my %replace,
-    'add_trend=s'       => \my $add_trend,
 ) or HelpMessage(1);
 
 # die unless we got the mandatory argument
@@ -62,78 +60,16 @@ if ($outfile) {
     $excel_obj = AlignDB::Excel->new(
         infile  => $infile,
         outfile => $outfile,
-        replace => \%replace,
     );
 }
 else {
     $excel_obj = AlignDB::Excel->new(
         infile  => $infile,
-        replace => \%replace,
     );
     $outfile = $excel_obj->outfile;
 }
 
 $excel_obj->jc_correction if $jc_correction;
-
-#----------------------------------------------------------#
-# draw charts section
-#----------------------------------------------------------#
-
-my @sheet_names = @{ $excel_obj->sheet_names };
-
-{
-
-    #----------------------------#
-    # worksheet
-    #----------------------------#
-    my @sheets = grep {/^ofg/} @sheet_names;
-
-    for (@sheets) {
-        my $sheet_name = $_;
-
-        my %option = (
-            chart_serial => 1,
-            x_column     => 1,
-            first_row    => 2,
-            last_row     => 17,
-            x_max_scale  => 15,
-            x_title      => "Distance to ofg",
-            Height       => 200,
-            Width        => 260,
-            Top          => 14.25,
-            Left         => 550,
-        );
-        $option{x_scale_unit} = 5;
-        $option{y_column}     = 2;
-        $option{y_title}      = "GC proportion";
-        $option{y2_column}    = 3;
-        $option{y2_title}     = "Window CV";
-        $excel_obj->draw_2y( $sheet_name, \%option );
-        delete $option{y2_column};
-        delete $option{y2_title};
-
-        # chart 2
-        $option{chart_serial}++;
-        $option{y_column} = 2;
-        $option{y_title}  = "GC proportion";
-        $option{Top} += $option{Height} + 14.25;
-        $excel_obj->draw_y( $sheet_name, \%option );
-
-        # chart 3
-        $option{chart_serial}++;
-        $option{y_column} = 3;
-        $option{y_title}  = "Window CV";
-        $option{Top} += $option{Height} + 14.25;
-        $excel_obj->draw_y( $sheet_name, \%option );
-
-        # chart 4
-        $option{chart_serial}++;
-        $option{y_column} = 4;
-        $option{y_title}  = "BED count";
-        $option{Top} += $option{Height} + 14.25;
-        $excel_obj->draw_y( $sheet_name, \%option );
-    }
-}
 
 #----------------------------------------------------------#
 # POST Processing

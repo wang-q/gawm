@@ -127,7 +127,6 @@ my $worker_insert = sub {
         next unless $chr =~ /^\w+$/;
         if ( !$nochr ) {
             $chr =~ s/chr0?//i;
-            $chr = "chr$chr";
         }
         next unless $start =~ /^\d+$/;
         next unless $end =~ /^\d+$/;
