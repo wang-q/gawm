@@ -57,7 +57,7 @@ cd ~/Scripts/gawm
 mongo S288c_prof --eval "db.dropDatabase();"
 
 # generate
-perl gen_mg.pl -d S288c_prof -n S288c --dir ~/data/alignment/yeast_combine/S288C/chrVII.fa --parallel 1
+perl gen_mg.pl -d S288c_prof -n S288c --dir ~/data/alignment/example/scer/Genomes/S288c/VII.fa --parallel 1
 
 # GC
 perl -d:NYTProf insert_gcwave.pl -d S288c_prof --batch 1 --parallel 4

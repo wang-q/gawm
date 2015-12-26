@@ -52,7 +52,7 @@ GetOptions(
     'db|d=s'   => \( my $dbname = $Config->{database}{db} ),
     'output|o=s' => \my $outfile,
     'by=s'       => \( my $by = "tag" ),
-        'replace=s'         => \my %replace,
+    'replace=s'  => \my %replace,
 ) or HelpMessage(1);
 
 $outfile = "$dbname.mg.xlsx" unless $outfile;
@@ -151,6 +151,16 @@ my $distance_to_trough = sub {
         $option{y_data}   = $data->[3];
         $option{top} += 18;
         $write_obj->draw_y( $sheet, \%option );
+
+        $option{y_column}  = 1;
+        $option{y_title}   = "Window GC";
+        $option{y_data}    = $data->[1];
+        $option{y2_column} = 2;
+        $option{y2_data}   = $data->[2];
+        $option{y2_title}  = "Window CV";
+        $option{top}       = 1;
+        $option{left}      = 12;
+        $write_obj->draw_2y( $sheet, \%option );
     }
 
     print "Sheet \"$sheet_name\" has been generated.\n";
@@ -233,6 +243,16 @@ my $distance_to_crest = sub {
         $option{y_data}   = $data->[3];
         $option{top} += 18;
         $write_obj->draw_y( $sheet, \%option );
+
+        $option{y_column}  = 1;
+        $option{y_title}   = "Window GC";
+        $option{y_data}    = $data->[1];
+        $option{y2_column} = 2;
+        $option{y2_data}   = $data->[2];
+        $option{y2_title}  = "Window CV";
+        $option{top}       = 1;
+        $option{left}      = 12;
+        $write_obj->draw_2y( $sheet, \%option );
     }
 
     print "Sheet \"$sheet_name\" has been generated.\n";
@@ -315,6 +335,16 @@ my $gradient = sub {
         $option{y_data}   = $data->[3];
         $option{top} += 18;
         $write_obj->draw_y( $sheet, \%option );
+
+        $option{y_column}  = 1;
+        $option{y_title}   = "Window GC";
+        $option{y_data}    = $data->[1];
+        $option{y2_column} = 2;
+        $option{y2_data}   = $data->[2];
+        $option{y2_title}  = "Window CV";
+        $option{top}       = 1;
+        $option{left}      = 12;
+        $write_obj->draw_2y( $sheet, \%option );
     }
 
     print "Sheet \"$sheet_name\" has been generated.\n";

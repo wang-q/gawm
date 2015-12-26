@@ -31,10 +31,11 @@ chart_mg.pl - Use Win32::OLE to automate Excel chart
 
     perl chart_mg.pl -i <file> [options]
       Options:
-        --help            brief help message
-        --man             full documentation
-        --infile          input file name (full path)
-        --outfile         output file name
+        --help      -?          brief help message
+        --infile    -i  STR     input file name (full path)
+        --outfile   -o  STR     output file name
+        --time                  time stamp
+        --index                 add an index sheet
 
 =cut
 
@@ -42,9 +43,9 @@ GetOptions(
     'help|?'      => sub { HelpMessage(0) },
     'infile|i=s'  => \my $infile,
     'outfile|o=s' => \my $outfile,
-    'jc=s'              => \( my $jc_correction   = $Config->{stat}{jc_correction} ),
-    'time_stamp=s'      => \( my $time_stamp      = $Config->{stat}{time_stamp} ),
-    'add_index_sheet=s' => \( my $add_index_sheet = $Config->{stat}{add_index_sheet} ),
+    'jc=s'    => \( my $jc_correction   = $Config->{stat}{jc_correction} ),
+    'time=s'  => \( my $time_stamp      = $Config->{stat}{time_stamp} ),
+    'index=s' => \( my $add_index_sheet = $Config->{stat}{add_index_sheet} ),
 ) or HelpMessage(1);
 
 # die unless we got the mandatory argument
@@ -63,9 +64,7 @@ if ($outfile) {
     );
 }
 else {
-    $excel_obj = AlignDB::Excel->new(
-        infile  => $infile,
-    );
+    $excel_obj = AlignDB::Excel->new( infile => $infile, );
     $outfile = $excel_obj->outfile;
 }
 
