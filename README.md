@@ -29,7 +29,7 @@ perl count_bed.pl -d S288c_gc --run insert -f doc/spo11_hot.bed --batch 1 --para
 perl count_bed.pl -d S288c_gc --run count --batch 1 --parallel 8
 
 # stats
-perl stat_mg.pl -d S288c_gc
+perl stat_mg.pl -d S288c_gc --index
 ```
 
 ## genome features: ofgsw
@@ -45,7 +45,7 @@ perl insert_bed.pl -d S288c_spo11 -tag spo11 -f doc/spo11_hot.bed --batch 1 --pa
 
 perl update_sw_cv.pl -d S288c_spo11 --batch 1 --parallel 8
 
-perl stat_mg.pl -d S288c_spo11 --by tag --replace ofg="DSBs"
+perl stat_mg.pl -d S288c_spo11 --index --by tag --replace ofg="DSBs"
 ```
 
 ## Prof GC wave
