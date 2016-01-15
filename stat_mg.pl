@@ -30,30 +30,30 @@ my $stopwatch = AlignDB::Stopwatch->new(
 
 =head1 NAME
 
-stat_mg.pl - Do stats 
+stat_mg.pl - Do stats on gawm databases
 
 =head1 SYNOPSIS
 
     perl stat_mg.pl [options]
       Options:
-        --help      -?          brief help message
-        --server        STR     MongoDB server IP/Domain name
-        --port          INT     MongoDB server port
-        --db        -d  STR     database name
-        --output    -o  STR     output filename, default is [db.mg.xlsx]
-        --by            STR     tag, type or tt, default is [tag]
-        --replace       STR=STR replace strings in axis names
-        --index                 add an index sheet
+        --help      -?              brief help message
+        --server    -s  STR         MongoDB server IP/Domain name
+        --port      -P  INT         MongoDB server port
+        --db        -d  STR         database name
+        --output    -o  STR         output filename, default is [db.mg.xlsx]
+        --by            STR         tag, type or tt, default is [tag]
+        --replace       STR=STR     replace strings in axis names
+        --index                     add an index sheet
 
 =cut
 
 GetOptions(
     'help|?' => sub { HelpMessage(0) },
-    'server=s' => \( my $server = $Config->{database}{server} ),
-    'port=i'   => \( my $port   = $Config->{database}{port} ),
-    'db|d=s'   => \( my $dbname = $Config->{database}{db} ),
-    'output|o=s' => \my $outfile,
-    'by=s'       => \( my $by = "tag" ),
+    'server|s=s' => \( my $server = $Config->{database}{server} ),
+    'port|P=i'   => \( my $port   = $Config->{database}{port} ),
+    'db|d=s'     => \( my $dbname = $Config->{database}{db} ),
+    'output|o=s' => \( my $outfile ),
+    'by=s'       => \( my $by     = "tag" ),
     'replace=s'  => \( my %replace ),
     'index'      => \( my $add_index_sheet, ),
 ) or HelpMessage(1);
@@ -63,7 +63,7 @@ $outfile = "$dbname.mg.xlsx" unless $outfile;
 #----------------------------------------------------------#
 # Init section
 #----------------------------------------------------------#
-$stopwatch->start_message("Do stat for $dbname...");
+$stopwatch->start_message("Do stats on $dbname...");
 
 my $write_obj = AlignDB::ToXLSX->new(
     outfile => $outfile,
@@ -166,7 +166,7 @@ my $distance_to_trough = sub {
         $write_obj->draw_2y( $sheet, \%option );
     }
 
-    print "Sheet \"$sheet_name\" has been generated.\n";
+    print "Sheet [$sheet_name] has been generated.\n";
 };
 
 #----------------------------------------------------------#
@@ -258,7 +258,7 @@ my $distance_to_crest = sub {
         $write_obj->draw_2y( $sheet, \%option );
     }
 
-    print "Sheet \"$sheet_name\" has been generated.\n";
+    print "Sheet [$sheet_name] has been generated.\n";
 };
 
 #----------------------------------------------------------#
@@ -350,7 +350,7 @@ my $gradient = sub {
         $write_obj->draw_2y( $sheet, \%option );
     }
 
-    print "Sheet \"$sheet_name\" has been generated.\n";
+    print "Sheet [$sheet_name] has been generated.\n";
 };
 
 #----------------------------------------------------------#
@@ -442,7 +442,7 @@ my $ofg_all = sub {
         $write_obj->draw_2y( $sheet, \%option );
     }
 
-    print "Sheet \"$sheet_name\" has been generated.\n";
+    print "Sheet [$sheet_name] has been generated.\n";
 };
 
 my $ofg_tag_type = sub {
@@ -564,7 +564,7 @@ my $ofg_tag_type = sub {
             $write_obj->draw_2y( $sheet, \%option );
         }
 
-        print "Sheet \"$sheet_name\" has been generated.\n";
+        print "Sheet [$sheet_name] has been generated.\n";
     };
 
     my $ary_ref;
@@ -583,6 +583,9 @@ my $ofg_tag_type = sub {
     }
 };
 
+#----------------------------------------------------------#
+# Run
+#----------------------------------------------------------#
 {
     &$distance_to_trough;
     &$distance_to_crest;
@@ -593,13 +596,16 @@ my $ofg_tag_type = sub {
 
 if ($add_index_sheet) {
     $write_obj->add_index_sheet;
-            print "Sheet [INDEX] has been generated.\n";
+    print "Sheet [INDEX] has been generated.\n";
 
 }
 
 $stopwatch->end_message;
 exit;
 
+#----------------------------------------------------------#
+# Subroutines
+#----------------------------------------------------------#
 sub get_tags {
     my $db = shift;
 
