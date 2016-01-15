@@ -597,7 +597,6 @@ my $ofg_tag_type = sub {
 if ($add_index_sheet) {
     $write_obj->add_index_sheet;
     print "Sheet [INDEX] has been generated.\n";
-
 }
 
 $stopwatch->end_message;
@@ -651,4 +650,3 @@ sub get_tts {
 
     return \@values;
 }
-
