@@ -94,7 +94,8 @@ my $distance_to_trough = sub {
     }
 
     my @names = qw{_id AVG_gc AVG_cv AVG_bed COUNT};
-    my $data = [ [], [], [], [], [] ];
+    my $data  = [];
+    push @{$data}, [] for @names;
 
     {    # write header
         ( $sheet_row, $sheet_col ) = ( 0, 0 );
@@ -186,7 +187,8 @@ my $distance_to_crest = sub {
     }
 
     my @names = qw{_id AVG_gc AVG_cv AVG_bed COUNT};
-    my $data = [ [], [], [], [], [] ];
+    my $data  = [];
+    push @{$data}, [] for @names;
 
     {    # write header
         ( $sheet_row, $sheet_col ) = ( 0, 0 );
@@ -278,7 +280,8 @@ my $gradient = sub {
     }
 
     my @names = qw{_id AVG_gc AVG_cv AVG_bed COUNT};
-    my $data = [ [], [], [], [], [] ];
+    my $data  = [];
+    push @{$data}, [] for @names;
 
     {    # write header
         ( $sheet_row, $sheet_col ) = ( 0, 0 );
@@ -370,7 +373,8 @@ my $ofg_all = sub {
     }
 
     my @names = qw{_id AVG_gc AVG_cv AVG_bed COUNT};
-    my $data = [ [], [], [], [], [] ];
+    my $data  = [];
+    push @{$data}, [] for @names;
 
     {    # write header
         ( $sheet_row, $sheet_col ) = ( 0, 0 );
@@ -475,7 +479,8 @@ my $ofg_tag_type = sub {
         my ( $sheet_row, $sheet_col );
 
         my @names = qw{_id AVG_gc AVG_cv AVG_bed COUNT};
-        my $data = [ [], [], [], [], [] ];
+        my $data  = [];
+        push @{$data}, [] for @names;
 
         {    # write header
             ( $sheet_row, $sheet_col ) = ( 0, 0 );
