@@ -77,11 +77,12 @@ my $db = MongoDB::MongoClient->new(
 )->get_database($dbname);
 
 #----------------------------------------------------------#
-# chart -- d1_indel_ld
+# chart -- gc_cv
 #----------------------------------------------------------#
-my $chart_distance_to_trough = sub {
-    my $sheet = shift;
-    my $data  = shift;
+my $chart_gc_cv = sub {
+    my $sheet   = shift;
+    my $data    = shift;
+    my $x_title = shift;
 
     my %option = (
         x_column    => 0,
@@ -90,7 +91,7 @@ my $chart_distance_to_trough = sub {
         last_row    => 16,
         x_max_scale => 15,
         y_data      => $data->[1],
-        x_title     => "Distance to GC troughs",
+        x_title     => $x_title,
         y_title     => "Window GC",
         top         => 1,
         left        => 6,
@@ -167,7 +168,7 @@ my $distance_to_trough = sub {
     }
 
     {    # chart
-        $chart_distance_to_trough->( $sheet, $data );
+        $chart_gc_cv->( $sheet, $data, "Distance to GC troughs" );
     }
 
     print "Sheet [$sheet_name] has been generated.\n";
@@ -179,7 +180,8 @@ my $distance_to_trough = sub {
 my $distance_to_crest = sub {
     my $sheet_name = 'distance_to_crest';
     my $sheet;
-    my ( $sheet_row, $sheet_col );
+    $write_obj->row(0);
+    $write_obj->column(0);
 
     my $coll = $db->get_collection('gsw');
     my $exists = $coll->find( { 'gc.cv' => { '$exists' => 1 } } )->count;
@@ -190,20 +192,13 @@ my $distance_to_crest = sub {
     }
 
     my @names = qw{_id AVG_gc AVG_cv AVG_bed COUNT};
-    my $data  = [];
-    push @{$data}, [] for @names;
-
-    {    # write header
-        ( $sheet_row, $sheet_col ) = ( 0, 0 );
-        my %option = (
-            sheet_row => $sheet_row,
-            sheet_col => $sheet_col,
-            header    => \@names,
-        );
-        ( $sheet, $sheet_row ) = $write_obj->write_header_direct( $sheet_name, \%option );
+    {    # header
+        $sheet = $write_obj->write_header( $sheet_name, { header => \@names } );
     }
 
-    {    # write data
+    my $data = [];
+    push @{$data}, [] for @names;
+    {    # content
         my @docs = $coll->aggregate(
             [   { '$match' => { 'gce.distance_crest' => { '$lte' => 15 } } },
                 {   '$group' => {
@@ -222,45 +217,11 @@ my $distance_to_crest = sub {
                 push @{ $data->[$i] }, $row->{ $names[$i] };
             }
         }
-        $sheet->write( $sheet_row, 0, $data, $write_obj->format->{NORMAL} );
+        $sheet->write( $write_obj->row, $write_obj->column, $data, $write_obj->format->{NORMAL} );
     }
 
     {    # chart
-        my %option = (
-            x_column    => 0,
-            y_column    => 1,
-            first_row   => 1,
-            last_row    => 16,
-            x_max_scale => 15,
-            y_data      => $data->[1],
-            x_title     => "Distance to GC crests",
-            y_title     => "Window GC",
-            top         => 1,
-            left        => 6,
-        );
-        $write_obj->draw_y( $sheet, \%option );
-
-        $option{y_column} = 2;
-        $option{y_title}  = "Window CV";
-        $option{y_data}   = $data->[2];
-        $option{top} += 18;
-        $write_obj->draw_y( $sheet, \%option );
-
-        $option{y_column} = 3;
-        $option{y_title}  = "BED count";
-        $option{y_data}   = $data->[3];
-        $option{top} += 18;
-        $write_obj->draw_y( $sheet, \%option );
-
-        $option{y_column}  = 1;
-        $option{y_title}   = "Window GC";
-        $option{y_data}    = $data->[1];
-        $option{y2_column} = 2;
-        $option{y2_data}   = $data->[2];
-        $option{y2_title}  = "Window CV";
-        $option{top}       = 1;
-        $option{left}      = 12;
-        $write_obj->draw_2y( $sheet, \%option );
+        $chart_gc_cv->( $sheet, $data, "Distance to GC crests" );
     }
 
     print "Sheet [$sheet_name] has been generated.\n";
@@ -272,7 +233,8 @@ my $distance_to_crest = sub {
 my $gradient = sub {
     my $sheet_name = 'gradient';
     my $sheet;
-    my ( $sheet_row, $sheet_col );
+    $write_obj->row(0);
+    $write_obj->column(0);
 
     my $coll = $db->get_collection('gsw');
     my $exists = $coll->find( { 'gc.cv' => { '$exists' => 1 } } )->count;
@@ -283,20 +245,13 @@ my $gradient = sub {
     }
 
     my @names = qw{_id AVG_gc AVG_cv AVG_bed COUNT};
-    my $data  = [];
-    push @{$data}, [] for @names;
-
-    {    # write header
-        ( $sheet_row, $sheet_col ) = ( 0, 0 );
-        my %option = (
-            sheet_row => $sheet_row,
-            sheet_col => $sheet_col,
-            header    => \@names,
-        );
-        ( $sheet, $sheet_row ) = $write_obj->write_header_direct( $sheet_name, \%option );
+    {    # header
+        $sheet = $write_obj->write_header( $sheet_name, { header => \@names } );
     }
 
-    {    # write data
+    my $data = [];
+    push @{$data}, [] for @names;
+    {    # content
         my @docs = $coll->aggregate(
             [   { '$match' => { 'gce.gradient' => { '$gte' => 1, '$lte' => 40 } } },
                 {   '$group' => {
@@ -315,7 +270,7 @@ my $gradient = sub {
                 push @{ $data->[$i] }, $row->{ $names[$i] };
             }
         }
-        $sheet->write( $sheet_row, 0, $data, $write_obj->format->{NORMAL} );
+        $sheet->write( $write_obj->row, 0, $data, $write_obj->format->{NORMAL} );
     }
 
     {    # chart
@@ -365,7 +320,8 @@ my $gradient = sub {
 my $ofg_all = sub {
     my $sheet_name = 'ofg_all';
     my $sheet;
-    my ( $sheet_row, $sheet_col );
+    $write_obj->row(0);
+    $write_obj->column(0);
 
     my $coll = $db->get_collection('ofgsw');
     my $exists = $coll->find( { 'gc.cv' => { '$exists' => 1 } } )->count;
@@ -376,20 +332,13 @@ my $ofg_all = sub {
     }
 
     my @names = qw{_id AVG_gc AVG_cv AVG_bed COUNT};
-    my $data  = [];
-    push @{$data}, [] for @names;
-
-    {    # write header
-        ( $sheet_row, $sheet_col ) = ( 0, 0 );
-        my %option = (
-            sheet_row => $sheet_row,
-            sheet_col => $sheet_col,
-            header    => \@names,
-        );
-        ( $sheet, $sheet_row ) = $write_obj->write_header_direct( $sheet_name, \%option );
+    {    # header
+        $sheet = $write_obj->write_header( $sheet_name, { header => \@names } );
     }
 
-    {    # write data
+    my $data = [];
+    push @{$data}, [] for @names;
+    {    # content
         my @docs = $coll->aggregate(
             [   { '$match' => { 'ofg.distance' => { '$lte' => 15 } } },
                 {   '$group' => {
@@ -408,45 +357,11 @@ my $ofg_all = sub {
                 push @{ $data->[$i] }, $row->{ $names[$i] };
             }
         }
-        $sheet->write( $sheet_row, 0, $data, $write_obj->format->{NORMAL} );
+        $sheet->write( $write_obj->row, 0, $data, $write_obj->format->{NORMAL} );
     }
 
     {    # chart
-        my %option = (
-            x_column    => 0,
-            y_column    => 1,
-            first_row   => 1,
-            last_row    => 16,
-            x_max_scale => 15,
-            y_data      => $data->[1],
-            x_title     => "Distance to ofg",
-            y_title     => "Window GC",
-            top         => 1,
-            left        => 6,
-        );
-        $write_obj->draw_y( $sheet, \%option );
-
-        $option{y_column} = 2;
-        $option{y_title}  = "Window CV";
-        $option{y_data}   = $data->[2];
-        $option{top} += 18;
-        $write_obj->draw_y( $sheet, \%option );
-
-        $option{y_column} = 3;
-        $option{y_title}  = "BED count";
-        $option{y_data}   = $data->[3];
-        $option{top} += 18;
-        $write_obj->draw_y( $sheet, \%option );
-
-        $option{y_column}  = 1;
-        $option{y_title}   = "Window GC";
-        $option{y_data}    = $data->[1];
-        $option{y2_column} = 2;
-        $option{y2_data}   = $data->[2];
-        $option{y2_title}  = "Window CV";
-        $option{top}       = 1;
-        $option{left}      = 12;
-        $write_obj->draw_2y( $sheet, \%option );
+        $chart_gc_cv->( $sheet, $data, "Distance to ofg" );
     }
 
     print "Sheet [$sheet_name] has been generated.\n";
@@ -479,23 +394,17 @@ my $ofg_tag_type = sub {
         # length limit of excel sheet names
         $sheet_name = substr $sheet_name, 0, 31;
         my $sheet;
-        my ( $sheet_row, $sheet_col );
+        $write_obj->row(0);
+        $write_obj->column(0);
 
         my @names = qw{_id AVG_gc AVG_cv AVG_bed COUNT};
-        my $data  = [];
-        push @{$data}, [] for @names;
-
-        {    # write header
-            ( $sheet_row, $sheet_col ) = ( 0, 0 );
-            my %option = (
-                sheet_row => $sheet_row,
-                sheet_col => $sheet_col,
-                header    => \@names,
-            );
-            ( $sheet, $sheet_row ) = $write_obj->write_header_direct( $sheet_name, \%option );
+        {    # header
+            $sheet = $write_obj->write_header( $sheet_name, { header => \@names } );
         }
 
-        {    # write data
+        my $data = [];
+        push @{$data}, [] for @names;
+        {    # content
 
             my $condition;
             if ( $by eq "tag" ) {
@@ -531,45 +440,11 @@ my $ofg_tag_type = sub {
                     push @{ $data->[$i] }, $row->{ $names[$i] };
                 }
             }
-            $sheet->write( $sheet_row, 0, $data, $write_obj->format->{NORMAL} );
+            $sheet->write( $write_obj->row, 0, $data, $write_obj->format->{NORMAL} );
         }
 
         {    # chart
-            my %option = (
-                x_column    => 0,
-                y_column    => 1,
-                first_row   => 1,
-                last_row    => 16,
-                x_max_scale => 15,
-                y_data      => $data->[1],
-                x_title     => "Distance to ofg",
-                y_title     => "Window GC",
-                top         => 1,
-                left        => 6,
-            );
-            $write_obj->draw_y( $sheet, \%option );
-
-            $option{y_column} = 2;
-            $option{y_title}  = "Window CV";
-            $option{y_data}   = $data->[2];
-            $option{top} += 18;
-            $write_obj->draw_y( $sheet, \%option );
-
-            $option{y_column} = 3;
-            $option{y_title}  = "BED count";
-            $option{y_data}   = $data->[3];
-            $option{top} += 18;
-            $write_obj->draw_y( $sheet, \%option );
-
-            $option{y_column}  = 1;
-            $option{y_title}   = "Window GC";
-            $option{y_data}    = $data->[1];
-            $option{y2_column} = 2;
-            $option{y2_data}   = $data->[2];
-            $option{y2_title}  = "Window CV";
-            $option{top}       = 1;
-            $option{left}      = 12;
-            $write_obj->draw_2y( $sheet, \%option );
+            $chart_gc_cv->( $sheet, $data, "Distance to ofg" );
         }
 
         print "Sheet [$sheet_name] has been generated.\n";
