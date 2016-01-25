@@ -67,7 +67,6 @@ $stopwatch->start_message("Do stats on $dbname...");
 
 my $write_obj = AlignDB::ToXLSX->new(
     outfile => $outfile,
-    mocking => 1,
     replace => \%replace,
 );
 
@@ -78,12 +77,57 @@ my $db = MongoDB::MongoClient->new(
 )->get_database($dbname);
 
 #----------------------------------------------------------#
+# chart -- d1_indel_ld
+#----------------------------------------------------------#
+my $chart_distance_to_trough = sub {
+    my $sheet = shift;
+    my $data  = shift;
+
+    my %option = (
+        x_column    => 0,
+        y_column    => 1,
+        first_row   => 1,
+        last_row    => 16,
+        x_max_scale => 15,
+        y_data      => $data->[1],
+        x_title     => "Distance to GC troughs",
+        y_title     => "Window GC",
+        top         => 1,
+        left        => 6,
+    );
+    $write_obj->draw_y( $sheet, \%option );
+
+    $option{y_column} = 2;
+    $option{y_title}  = "Window CV";
+    $option{y_data}   = $data->[2];
+    $option{top} += 18;
+    $write_obj->draw_y( $sheet, \%option );
+
+    $option{y_column} = 3;
+    $option{y_title}  = "BED count";
+    $option{y_data}   = $data->[3];
+    $option{top} += 18;
+    $write_obj->draw_y( $sheet, \%option );
+
+    $option{y_column}  = 1;
+    $option{y_title}   = "Window GC";
+    $option{y_data}    = $data->[1];
+    $option{y2_column} = 2;
+    $option{y2_data}   = $data->[2];
+    $option{y2_title}  = "Window CV";
+    $option{top}       = 1;
+    $option{left}      = 12;
+    $write_obj->draw_2y( $sheet, \%option );
+};
+
+#----------------------------------------------------------#
 # worksheet -- distance_to_trough
 #----------------------------------------------------------#
 my $distance_to_trough = sub {
     my $sheet_name = 'distance_to_trough';
     my $sheet;
-    my ( $sheet_row, $sheet_col );
+    $write_obj->row(0);
+    $write_obj->column(0);
 
     my $coll = $db->get_collection('gsw');
     my $exists = $coll->find( { "gc.cv" => { '$exists' => 1 } } )->count;
@@ -94,20 +138,13 @@ my $distance_to_trough = sub {
     }
 
     my @names = qw{_id AVG_gc AVG_cv AVG_bed COUNT};
-    my $data  = [];
-    push @{$data}, [] for @names;
-
-    {    # write header
-        ( $sheet_row, $sheet_col ) = ( 0, 0 );
-        my %option = (
-            sheet_row => $sheet_row,
-            sheet_col => $sheet_col,
-            header    => \@names,
-        );
-        ( $sheet, $sheet_row ) = $write_obj->write_header_direct( $sheet_name, \%option );
+    {    # header
+        $sheet = $write_obj->write_header( $sheet_name, { header => \@names } );
     }
 
-    {    # write data
+    my $data = [];
+    push @{$data}, [] for @names;
+    {    # content
         my @docs = $coll->aggregate(
             [   { '$match' => { 'gce.distance' => { '$lte' => 15 } } },
                 {   '$group' => {
@@ -126,45 +163,11 @@ my $distance_to_trough = sub {
                 push @{ $data->[$i] }, $row->{ $names[$i] };
             }
         }
-        $sheet->write( $sheet_row, 0, $data, $write_obj->format->{NORMAL} );
+        $sheet->write( $write_obj->row, $write_obj->column, $data, $write_obj->format->{NORMAL} );
     }
 
     {    # chart
-        my %option = (
-            x_column    => 0,
-            y_column    => 1,
-            first_row   => 1,
-            last_row    => 16,
-            x_max_scale => 15,
-            y_data      => $data->[1],
-            x_title     => "Distance to GC troughs",
-            y_title     => "Window GC",
-            top         => 1,
-            left        => 6,
-        );
-        $write_obj->draw_y( $sheet, \%option );
-
-        $option{y_column} = 2;
-        $option{y_title}  = "Window CV";
-        $option{y_data}   = $data->[2];
-        $option{top} += 18;
-        $write_obj->draw_y( $sheet, \%option );
-
-        $option{y_column} = 3;
-        $option{y_title}  = "BED count";
-        $option{y_data}   = $data->[3];
-        $option{top} += 18;
-        $write_obj->draw_y( $sheet, \%option );
-
-        $option{y_column}  = 1;
-        $option{y_title}   = "Window GC";
-        $option{y_data}    = $data->[1];
-        $option{y2_column} = 2;
-        $option{y2_data}   = $data->[2];
-        $option{y2_title}  = "Window CV";
-        $option{top}       = 1;
-        $option{left}      = 12;
-        $write_obj->draw_2y( $sheet, \%option );
+        $chart_distance_to_trough->( $sheet, $data );
     }
 
     print "Sheet [$sheet_name] has been generated.\n";
