@@ -44,6 +44,7 @@ stat_mg.pl - Do stats on gawm databases
         --by            STR         tag, type or tt, default is [tag]
         --replace       STR=STR     replace strings in axis names
         --index                     add an index sheet
+        --chart                 add charts
 
 =cut
 
@@ -54,8 +55,9 @@ GetOptions(
     'db|d=s'     => \( my $dbname = $Config->{database}{db} ),
     'output|o=s' => \( my $outfile ),
     'by=s'       => \( my $by     = "tag" ),
-    'replace=s'  => \( my %replace ),
-    'index'      => \( my $add_index_sheet, ),
+    'replace=s'  => \my %replace,
+    'index'      => \my $add_index_sheet,
+    'chart'      => \my $add_chart,
 ) or HelpMessage(1);
 
 $outfile = "$dbname.mg.xlsx" unless $outfile;
@@ -167,7 +169,7 @@ my $distance_to_trough = sub {
         $sheet->write( $write_obj->row, $write_obj->column, $data, $write_obj->format->{NORMAL} );
     }
 
-    {    # chart
+    if ($add_chart) {    # chart
         $chart_gc_cv->( $sheet, $data, "Distance to GC troughs" );
     }
 
@@ -220,7 +222,7 @@ my $distance_to_crest = sub {
         $sheet->write( $write_obj->row, $write_obj->column, $data, $write_obj->format->{NORMAL} );
     }
 
-    {    # chart
+    if ($add_chart) {    # chart
         $chart_gc_cv->( $sheet, $data, "Distance to GC crests" );
     }
 
@@ -273,7 +275,7 @@ my $gradient = sub {
         $sheet->write( $write_obj->row, 0, $data, $write_obj->format->{NORMAL} );
     }
 
-    {    # chart
+    if ($add_chart) {    # chart
         my %option = (
             x_column    => 0,
             y_column    => 1,
@@ -360,7 +362,7 @@ my $ofg_all = sub {
         $sheet->write( $write_obj->row, 0, $data, $write_obj->format->{NORMAL} );
     }
 
-    {    # chart
+    if ($add_chart) {    # chart
         $chart_gc_cv->( $sheet, $data, "Distance to ofg" );
     }
 
@@ -443,7 +445,7 @@ my $ofg_tag_type = sub {
             $sheet->write( $write_obj->row, 0, $data, $write_obj->format->{NORMAL} );
         }
 
-        {    # chart
+        if ($add_chart) {    # chart
             $chart_gc_cv->( $sheet, $data, "Distance to ofg" );
         }
 
