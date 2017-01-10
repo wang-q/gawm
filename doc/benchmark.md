@@ -5,8 +5,8 @@
 ```bash
 mkdir -p ~/data/dumps/mongodb/
 
-export GAWM_MONGO_DIR=$HOME/share/mongodb30/bin
-export GAWM_PORT=27030
+export GAWM_MONGO_DIR=$HOME/share/mongodb/bin
+export GAWM_PORT=27017
 export GAWM_PARALLEL=4
 
 cd ~/Scripts/gawm/
