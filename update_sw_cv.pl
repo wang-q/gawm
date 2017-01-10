@@ -6,7 +6,7 @@ use autodie;
 use Getopt::Long;
 use Config::Tiny;
 use FindBin;
-use YAML qw(Dump Load DumpFile LoadFile);
+use YAML::Syck;
 
 use MCE;
 use MongoDB;
@@ -17,7 +17,7 @@ use AlignDB::GC;
 use AlignDB::Stopwatch;
 
 use lib "$FindBin::RealBin/lib";
-use MyUtil qw(center_resize check_coll);
+use MyUtil qw(check_coll);
 
 #----------------------------------------------------------#
 # GetOpt section
@@ -25,11 +25,7 @@ use MyUtil qw(center_resize check_coll);
 my $Config = Config::Tiny->read("$FindBin::RealBin/config.ini");
 
 # record ARGV and Config
-my $stopwatch = AlignDB::Stopwatch->new(
-    program_name => $0,
-    program_argv => [@ARGV],
-    program_conf => $Config,
-);
+my $stopwatch = AlignDB::Stopwatch->new();
 
 # AlignDB::GC options
 my $stat_segment_size = $Config->{gc}{stat_segment_size};
@@ -221,5 +217,32 @@ $mce->forchunk( \@jobs, $worker, );
 $stopwatch->end_message;
 
 exit;
+
+sub center_resize {
+    my AlignDB::IntSpan $old_set    = shift;
+    my AlignDB::IntSpan $parent_set = shift;
+    my $resize     = shift;
+
+    # find the middles of old_set
+    my $half_size           = int( $old_set->size / 2 );
+    my $midleft             = $old_set->at($half_size);
+    my $midright            = $old_set->at( $half_size + 1 );
+    my $midleft_parent_idx  = $parent_set->index($midleft);
+    my $midright_parent_idx = $parent_set->index($midright);
+
+    return unless $midleft_parent_idx and $midright_parent_idx;
+
+    # map to parent
+    my $parent_size  = $parent_set->size;
+    my $half_resize  = int( $resize / 2 );
+    my $new_left_idx = $midleft_parent_idx - $half_resize + 1;
+    $new_left_idx = 1 if $new_left_idx < 1;
+    my $new_right_idx = $midright_parent_idx + $half_resize - 1;
+    $new_right_idx = $parent_size if $new_right_idx > $parent_size;
+
+    my $new_set = $parent_set->slice( $new_left_idx, $new_right_idx );
+
+    return $new_set;
+}
 
 __END__

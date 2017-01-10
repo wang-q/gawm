@@ -25,7 +25,7 @@ use App::RL::Common;
 use App::Fasops::Common;
 
 use lib "$FindBin::RealBin/lib";
-use MyUtil qw(process_message check_coll center_resize);
+use MyUtil qw(process_message check_coll);
 
 #----------------------------------------------------------#
 # GetOpt section

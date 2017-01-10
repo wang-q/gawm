@@ -18,7 +18,7 @@ use AlignDB::IntSpan;
 use AlignDB::Stopwatch;
 
 use lib "$FindBin::RealBin/lib";
-use MyUtil qw(center_resize check_coll calc_gc_ratio);
+use MyUtil qw(check_coll);
 
 #----------------------------------------------------------#
 # GetOpt section
