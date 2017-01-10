@@ -3,7 +3,7 @@ use strict;
 use warnings;
 use autodie;
 
-use Getopt::Long qw(HelpMessage);
+use Getopt::Long;
 use Config::Tiny;
 use FindBin;
 use YAML qw(Dump Load DumpFile LoadFile);
@@ -57,13 +57,13 @@ update_sw_cv.pl - CV for ofgsw and gsw
 =cut
 
 GetOptions(
-    'help|?' => sub { HelpMessage(0) },
+    'help|?' => sub { Getopt::Long::HelpMessage(0) },
     'server=s'   => \( my $server       = $Config->{database}{server} ),
     'port=i'     => \( my $port         = $Config->{database}{port} ),
     'db|d=s'     => \( my $dbname       = $Config->{database}{db} ),
     'parallel=i' => \( my $parallel     = 1 ),
     'batch=i'    => \( my $batch_number = 10 ),
-) or HelpMessage(1);
+) or Getopt::Long::HelpMessage(1);
 
 #----------------------------------------------------------#
 # Init
@@ -96,14 +96,18 @@ my $worker = sub {
     $inner_watch->block_message("Process task [$chunk_id] by worker #$wid");
 
     # wait forever for responses
+    #@type MongoDB::Database
     my $db = MongoDB::MongoClient->new(
         host          => $server,
         port          => $port,
         query_timeout => -1,
     )->get_database($dbname);
 
+    #@type MongoDB::Collection
     my $coll_ofgsw = $db->get_collection('ofgsw');
-    my $coll_gsw   = $db->get_collection('gsw');
+
+    #@type MongoDB::Collection
+    my $coll_gsw = $db->get_collection('gsw');
 
     # AlignDB::GC
     my $obj = AlignDB::GC->new(
@@ -112,6 +116,7 @@ my $worker = sub {
         skip_mdcw        => 1,
     );
 
+    #@type MongoDB::Collection
     my $coll_align = $db->get_collection('align');
     for my $job (@jobs) {
         my $align = $coll_align->find_one( { _id => $job->{_id} } );
