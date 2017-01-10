@@ -3,19 +3,15 @@ use strict;
 use warnings;
 use autodie;
 
-use Getopt::Long qw(HelpMessage);
+use Getopt::Long;
 use Config::Tiny;
 use FindBin;
-use YAML qw(Dump Load DumpFile LoadFile);
+use YAML::Syck;
 
 use MCE;
 use MongoDB;
 $MongoDB::BSON::looks_like_number = 1;
 use MongoDB::OID;
-
-use Roman;
-use List::Util qw(first max maxstr min minstr reduce shuffle sum);
-use List::MoreUtils qw(any all uniq zip);
 
 use AlignDB::IntSpan;
 use AlignDB::Window;
@@ -30,19 +26,15 @@ use MyUtil qw(check_coll);
 my $Config = Config::Tiny->read("$FindBin::RealBin/config.ini");
 
 # record ARGV and Config
-my $stopwatch = AlignDB::Stopwatch->new(
-    program_name => $0,
-    program_argv => [@ARGV],
-    program_conf => $Config,
-);
+my $stopwatch = AlignDB::Stopwatch->new();
 
 =head1 NAME
 
-count_bed.pl - Add bed files to bed and count intersections.
+count_position.pl - Add position files and count intersections.
 
 =head1 SYNOPSIS
 
-    perl count_bed.pl [options]
+    perl count_position.pl [options]
       Options:
         --help      -?          brief help message
         --server        STR     MongoDB server IP/Domain name
@@ -52,8 +44,7 @@ count_bed.pl - Add bed files to bed and count intersections.
         --run       -r  STR     all, insert or count, default is [all]
         --nochr                 remove 'chr' from chr_name
         --parallel      INT     run in parallel mode, [1]
-        --batch         INT     number of alignments processed in one child
-                                process, [10]
+        --batch         INT     alignments processed in one child process, [10]
 
     perl count_bed.pl -d S288c --run insert -f ~/Scripts/alignDB/ofg/spo11/spo11_hot.bed --batch 1 --parallel 1
     perl count_bed.pl -d S288c --run count --batch 1 --parallel 4
@@ -61,23 +52,22 @@ count_bed.pl - Add bed files to bed and count intersections.
 =cut
 
 GetOptions(
-    'help|?' => sub { HelpMessage(0) },
+    'help|?' => sub { Getopt::Long::HelpMessage(0) },
     'server=s'   => \( my $server       = $Config->{database}{server} ),
     'port=i'     => \( my $port         = $Config->{database}{port} ),
     'db|d=s'     => \( my $dbname       = $Config->{database}{db} ),
-    'f|file=s'   => \my @files,
-    'r|run=s'    => \( my $run          = "all" ),
-    'nochr'      => \my $nochr,
+    'file|f=s'   => \my @files,
+    'run|r=s'    => \( my $run          = "all" ),
     'parallel=i' => \( my $parallel     = 1 ),
     'batch=i'    => \( my $batch_number = 10 ),
-) or HelpMessage(1);
+) or Getopt::Long::HelpMessage(1);
 
 #----------------------------------------------------------#
 # Init objects
 #----------------------------------------------------------#
-$stopwatch->start_message("Count bed of $dbname...");
+$stopwatch->start_message("Count positions of $dbname...");
 
-$stopwatch->block_message( "Total bed files are " . scalar(@files) ) if @files;
+$stopwatch->block_message( "Total position files are " . scalar(@files) ) if @files;
 
 #----------------------------------------------------------#
 # workers
@@ -94,6 +84,7 @@ my $worker_insert = sub {
     print "Reading file [$file]\n";
 
     # wait forever for responses
+    #@type MongoDB::Database
     my $db = MongoDB::MongoClient->new(
         host          => $server,
         port          => $port,
@@ -107,43 +98,37 @@ my $worker_insert = sub {
     while ( my $string = <$data_fh> ) {
         next unless defined $string;
         chomp $string;
-        my ( $chr, $start, $end )
-            = ( split /\t/, $string )[ 0, 1, 2 ];
-        next unless $chr =~ /^\w+$/;
-        if ( $nochr ) {
-            $chr =~ s/chr0?//i;
-        }
-        next unless $start =~ /^\d+$/;
-        next unless $end =~ /^\d+$/;
 
-        if ( $start > $end ) {
-            ( $start, $end ) = ( $end, $start );
-        }
+        my $info = App::RL::Common::decode_header($string);
+        next unless defined $info->{chr};
 
         my $align = $coll_align->find_one(
-            {   'chr.name'  => $chr,
-                'chr.start' => { '$lte' => $start },
-                'chr.end'   => { '$gte' => $end }
+            {   'chr.name'  => $info->{chr},
+                'chr.start' => { '$lte' => $info->{start} },
+                'chr.end'   => { '$gte' => $info->{end} }
             }
         );
+
         if ( !$align ) {
-            print "    Can't locate an align for $chr:$start-$end\n";
+            print "    Can't locate an align for $string\n";
             next;
         }
         push @beds,
             {
             align => { _id => $align->{_id}, },
             chr   => {
-                name    => $chr,
-                start   => $start,
-                end     => $end,
-                runlist => AlignDB::IntSpan->new->add_range( $start, $end )->runlist,
+                name    => $info->{chr},
+                start   => $info->{start},
+                end     => $info->{end},
+                runlist => AlignDB::IntSpan->new->add_pair( $info->{start}, $info->{end} )->runlist,
             },
             };
     }
     close $data_fh;
 
     print "Inserting file [$file]\n";
+
+    #@type MongoDB::Collection
     my $coll_bed = $db->get_collection('bed');
     while ( scalar @beds ) {
         my @batching = splice @beds, 0, 10000;
@@ -162,6 +147,7 @@ my $worker_count = sub {
     $inner_watch->block_message("Process task [$chunk_id] by worker #$wid");
 
     # wait forever for responses
+    #@type MongoDB::Database
     my $db = MongoDB::MongoClient->new(
         host          => $server,
         port          => $port,
@@ -247,17 +233,22 @@ my $worker_count = sub {
 # start update
 #----------------------------------------------------------#
 if ( $run eq "all" or $run eq "insert" ) {
+
+    #@type MongoDB::Database
     my $db = MongoDB::MongoClient->new(
         host          => $server,
         port          => $port,
         query_timeout => -1,
     )->get_database($dbname);
+
+    #@type MongoDB::Collection
     my $coll = $db->get_collection('bed');
     $coll->drop;
 
     my $mce = MCE->new( max_workers => $parallel, );
     $mce->foreach( \@files, $worker_insert, );    # foreach implies chunk_size => 1.
 
+    #@type MongoDB::IndexView
     my $indexes = $coll->indexes;
     $indexes->create_one( [ 'align._id' => 1 ] );
     $indexes->create_one( [ chr_name => 1, chr_start => 1, chr_end => 1 ] );
@@ -286,6 +277,8 @@ $stopwatch->end_message;
 exit;
 
 sub count_bed_in_sw {
+
+    #@type MongoDB::Collection
     my $coll     = shift;
     my $align_id = shift;
     my $sw       = shift;
