@@ -134,7 +134,7 @@ my $worker_insert = sub {
             my $ofg_align_start = $info->{start} - $align->{chr}{start} + 1;
             my $ofg_align_end   = $info->{end} - $align->{chr}{start} + 1;
             my $ofg_seq         = substr $align->{seq}, $ofg_align_start - 1, $length;
-            my $ofg_gc          = App::Fasops::Common::calc_gc_ratio([$ofg_seq]);
+            my $ofg_gc          = App::Fasops::Common::calc_gc_ratio( [$ofg_seq] );
             push @data,
                 {
                 align => {
@@ -266,7 +266,7 @@ my $worker_sw = sub {
                 $ofgsw->{bed_count} = 0;
                 my $ofgsw_seq = substr $align->{seq}, $rsw->{set}->min - 1, $ofgsw->{length};
                 $ofgsw->{gc} = {
-                    gc   => App::Fasops::Common::calc_gc_ratio([$ofgsw_seq]),
+                    gc => App::Fasops::Common::calc_gc_ratio( [$ofgsw_seq] ),
                     mean => 0.0,
                     cv   => 0.0,
                     std  => 0.0,
