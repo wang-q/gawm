@@ -16,6 +16,7 @@ use MongoDB::OID;
 use AlignDB::IntSpan;
 use AlignDB::Window;
 use AlignDB::Stopwatch;
+use App::RL::Common;
 
 use lib "$FindBin::RealBin/lib";
 use MyUtil qw(check_coll);
@@ -257,6 +258,7 @@ if ( $run eq "all" or $run eq "insert" ) {
 }
 
 if ( $run eq "all" or $run eq "count" ) {
+    #@type MongoDB::Database
     my $db = MongoDB::MongoClient->new(
         host          => $server,
         port          => $port,
@@ -264,6 +266,7 @@ if ( $run eq "all" or $run eq "count" ) {
     )->get_database($dbname);
 
     my @jobs = $db->get_collection('align')->find->fields( { _id => 1 } )->all;
+    $stopwatch->block_message("Total align: " . scalar(@jobs));
 
     my $mce = MCE->new( max_workers => $parallel, chunk_size => $batch_number, );
     $mce->forchunk( \@jobs, $worker_count, );
