@@ -13,9 +13,11 @@ MYMETA.yml
 nytprof.out
 pm_to_blib
 
+# IDE
+.idea/
+
 *.xls
 *.xlsx
-*.bak
 *.fa
 *.fas
 *.fasta
@@ -34,4 +36,3 @@ doc/
 .DS_Store
 *.log
 *.bak
-
