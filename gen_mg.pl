@@ -3,15 +3,14 @@ use strict;
 use warnings;
 use autodie;
 
-use Getopt::Long qw(HelpMessage);
+use Getopt::Long;
 use Config::Tiny;
 use FindBin;
-use YAML qw(Dump Load DumpFile LoadFile);
+use YAML::Syck;
 
-use MCE;
 use File::Find::Rule;
+use MCE;
 use Path::Tiny;
-use Text::CSV_XS;
 
 use MongoDB;
 $MongoDB::BSON::looks_like_number = 1;
@@ -19,6 +18,9 @@ use MongoDB::OID;
 
 use AlignDB::IntSpan;
 use AlignDB::Stopwatch;
+
+use App::RL::Common;
+use App::Fasops::Common;
 
 use lib "$FindBin::RealBin/lib";
 use MyUtil qw(read_fasta check_coll);
@@ -29,11 +31,7 @@ use MyUtil qw(read_fasta check_coll);
 my $Config = Config::Tiny->read("$FindBin::RealBin/config.ini");
 
 # record ARGV and Config
-my $stopwatch = AlignDB::Stopwatch->new(
-    program_name => $0,
-    program_argv => [@ARGV],
-    program_conf => $Config,
-);
+my $stopwatch = AlignDB::Stopwatch->new();
 
 =head1 NAME
 
@@ -68,7 +66,7 @@ gen_mg.pl - Generate database from fasta files
 =cut
 
 GetOptions(
-    'help|?' => sub { HelpMessage(0) },
+    'help|?' => sub { Getopt::Long::HelpMessage(0) },
     'server=s'   => \( my $server           = $Config->{database}{server} ),
     'port=i'     => \( my $port             = $Config->{database}{port} ),
     'db|d=s'     => \( my $dbname           = $Config->{database}{db} ),
@@ -79,32 +77,15 @@ GetOptions(
     'fill=i'     => \( my $fill             = 50 ),
     'min=i'      => \( my $min_length       = 5000 ),
     'parallel=i' => \( my $parallel         = 1 ),
-) or HelpMessage(1);
+) or Getopt::Long::HelpMessage(1);
 
 # die unless we got the mandatory argument
-HelpMessage(1) unless defined $dir;
+Getopt::Long::HelpMessage(1) unless defined $dir;
 
 #----------------------------------------------------------#
 # Init
 #----------------------------------------------------------#
 $stopwatch->start_message("Generate database from fasta files");
-
-{
-    $stopwatch->block_message("Init database $dbname");
-    my $db = MongoDB::MongoClient->new(
-        host          => $server,
-        port          => $port,
-        query_timeout => -1,
-    )->get_database($dbname);
-
-    $db->get_collection('chr')->drop;
-    $db->get_collection('align')->drop;
-}
-
-#----------------------------------------------------------#
-# Search for size and fasta files
-#----------------------------------------------------------#
-$stopwatch->block_message("Insert to chr");
 
 if ( !defined $size_file ) {
     if ( path($dir)->is_file ) {
@@ -129,38 +110,48 @@ if ( !defined $common_name ) {
     $common_name = path($dir)->basename;
 }
 
-my @files = sort File::Find::Rule->file->name( '*.fa', '*.fas', '*.fasta' )->in($dir);
-printf "\n----Total .fa Files: %4s----\n\n", scalar @files;
-
 {
-    my $mongo = MongoDB::MongoClient->new(
+    $stopwatch->block_message("Init database $dbname");
+    my $client = MongoDB::MongoClient->new(
         host          => $server,
         port          => $port,
         query_timeout => -1,
     );
-    my $db = $mongo->get_database($dbname);
+    $client->ns("$dbname.chr")->drop;
+    $client->ns("$dbname.align")->drop;
+}
 
-    my $coll_chr = $db->get_collection('chr');
+#----------------------------------------------------------#
+# Search for size and fasta files
+#----------------------------------------------------------#
+$stopwatch->block_message("Insert to chr");
 
-    my $csv = Text::CSV_XS->new( { binary => 1, eol => "\n", sep => "\t" } );
-    open my $csv_fh, "<", $size_file;
-    my @fields = qw{name length};
+my @files = sort File::Find::Rule->file->name( '*.fa', '*.fas', '*.fasta' )->in($dir);
+printf "    Total .fa Files: [%s]\n", scalar @files;
+
+{
+    my $client = MongoDB::MongoClient->new(
+        host          => $server,
+        port          => $port,
+        query_timeout => -1,
+    );
+
+    #@type MongoDB::Collection
+    my $coll_chr = $client->ns("$dbname.chr");
 
     my @chrs;
-    while ( my $row = $csv->getline($csv_fh) ) {
-        my $data = {};
-        for my $i ( 0 .. $#fields ) {
-            $data->{ $fields[$i] } = $row->[$i];
-        }
-        $data->{common_name} = $common_name;
-
-        push @chrs, $data;
+    my $length_of = App::RL::Common::read_sizes($size_file);
+    for my $key ( keys %{$length_of} ) {
+        push @chrs,
+            {
+            name        => $key,
+            length      => $length_of->{$key},
+            common_name => $common_name,
+            };
     }
-    close $csv_fh;
-
     $coll_chr->insert_many( \@chrs );
 
-    print "There are @{[$coll_chr->count]} documents in collection chromosome\n";
+    printf "    There are [%s] documents in collection chromosome\n", $coll_chr->count;
 }
 
 #----------------------------------------------------------#
@@ -169,11 +160,11 @@ printf "\n----Total .fa Files: %4s----\n\n", scalar @files;
 my $worker = sub {
     my ( $self, $chunk_ref, $chunk_id ) = @_;
     my $infile = $chunk_ref->[0];
+    my $wid    = MCE->wid;
 
-    my $wid = MCE->wid;
-
-    my $inner_watch = AlignDB::Stopwatch->new;
-    $inner_watch->block_message("Process task [$chunk_id] by worker #$wid\n    File [$infile]...");
+    my $inner    = AlignDB::Stopwatch->new;
+    my $basename = path($infile)->basename;
+    $inner->block_message("Process task [$chunk_id] by worker #$wid. [$basename]");
 
     my $db = MongoDB::MongoClient->new(
         host          => $server,
@@ -255,7 +246,7 @@ my $worker = sub {
         }
     }
 
-    $inner_watch->block_message( "$infile has been processed.", "duration" );
+    $inner->block_message( "$infile has been processed.", "duration" );
 
     return;
 };
