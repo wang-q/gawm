@@ -23,7 +23,7 @@ use App::RL::Common;
 use App::Fasops::Common;
 
 use lib "$FindBin::RealBin/lib";
-use MyUtil qw(read_fasta check_coll);
+use MyUtil qw(check_coll);
 
 #----------------------------------------------------------#
 # GetOpt section
@@ -166,21 +166,23 @@ my $worker = sub {
     my $basename = path($infile)->basename;
     $inner->block_message("Process task [$chunk_id] by worker #$wid. [$basename]");
 
+    #@type MongoDB::Database
     my $db = MongoDB::MongoClient->new(
         host          => $server,
         port          => $port,
         query_timeout => -1,
     )->get_database($dbname);
 
-    my ( $seq_of, $seq_names ) = read_fasta($infile);
+    my $seq_of = App::Fasops::Common::read_fasta($infile);
 
-    for my $chr_name ( @{$seq_names} ) {
+    for my $chr_name ( keys %{$seq_of} ) {
         print "    Processing chromosome $chr_name\n";
 
         my $chr_seq    = $seq_of->{$chr_name};
         my $chr_length = length $chr_seq;
 
         # find chromosome OID
+        #@type MongoDB::Collection
         my $coll_chr = $db->get_collection('chr');
         my $chr_id = $coll_chr->find_one( { 'common_name' => $common_name, 'name' => $chr_name } );
         return unless $chr_id;
@@ -222,6 +224,7 @@ my $worker = sub {
         }
 
         # insert to collection align
+        #@type MongoDB::Collection
         my $coll_align = $db->get_collection('align');
         for my $region (@regions) {
             my ( $start, $end ) = @{$region};

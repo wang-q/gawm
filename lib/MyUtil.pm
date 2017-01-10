@@ -64,33 +64,6 @@ sub check_coll {
         . "    Total $total\n    Exists $exists\n    Non exists $non_exists\n";
 }
 
-sub read_fasta {
-    my $filename = shift;
-
-    my @lines = path($filename)->lines;
-
-    my @seq_names;
-    my %seqs;
-    for my $line (@lines) {
-        if ( $line =~ /^\>[\w:-]+/ ) {
-            $line =~ s/\>//;
-            chomp $line;
-            push @seq_names, $line;
-            $seqs{$line} = '';
-        }
-        elsif ( $line =~ /^[\w-]+/ ) {
-            $line =~ s/[^\w-]//g;
-            chomp $line;
-            my $seq_name = $seq_names[-1];
-            $seqs{$seq_name} .= $line;
-        }
-        else {    # Blank line, do nothing
-        }
-    }
-
-    return ( \%seqs, \@seq_names );
-}
-
 sub calc_gc_ratio {
     my @seqs = @_;
 
