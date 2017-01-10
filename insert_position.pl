@@ -15,17 +15,17 @@ use MongoDB;
 $MongoDB::BSON::looks_like_number = 1;
 use MongoDB::OID;
 
-use Roman;
-use List::Util qw(first max maxstr min minstr reduce shuffle sum);
 use List::MoreUtils;
 
-use AlignDB::GC;
 use AlignDB::IntSpan;
 use AlignDB::Stopwatch;
 use AlignDB::Window;
 
+use App::RL::Common;
+use App::Fasops::Common;
+
 use lib "$FindBin::RealBin/lib";
-use MyUtil qw(process_message check_coll center_resize calc_gc_ratio);
+use MyUtil qw(process_message check_coll center_resize);
 
 #----------------------------------------------------------#
 # GetOpt section
@@ -38,16 +38,6 @@ my $stopwatch = AlignDB::Stopwatch->new(
     program_argv => [@ARGV],
     program_conf => $Config,
 );
-
-# AlignDB::GC options
-my $wave_window_size  = $Config->{gc}{wave_window_size};
-my $wave_window_step  = $Config->{gc}{wave_window_step};
-my $vicinal_size      = $Config->{gc}{vicinal_size};
-my $fall_range        = $Config->{gc}{fall_range};
-my $gsw_size          = $Config->{gc}{gsw_size};
-my $stat_segment_size = $Config->{gc}{stat_segment_size};
-my $stat_window_size  = $Config->{gc}{stat_window_size};
-my $stat_window_step  = $Config->{gc}{stat_window_step};
 
 =head1 NAME
 
@@ -65,10 +55,8 @@ insert_position.pl - Add position files to ofg and generate ofgsw.
         --tag       -f  @STR    bed tags
         --type      -f  @STR    bed types
         --style         STR     center_intact or center, default is [center_intact]
-        --nochr                 remove 'chr' from chr_name
         --parallel      INT     run in parallel mode, [1]
-        --batch         INT     number of alignments processed in one child
-                                process, [10]
+        --batch         INT     alignments processed in one child process, [10]
 
     mongo S288c --eval "db.dropDatabase();"
     perl gen_mg.pl -d S288c -n S288c --dir ~/data/alignment/yeast_combine/S288C  --parallel 1
@@ -85,7 +73,6 @@ GetOptions(
     'tag=s'      => \my @tags,
     'type=s'     => \my @types,
     'style=s'    => \( my $style        = "center_intact" ),
-    'nochr'      => \my $nochr,
     'parallel=i' => \( my $parallel     = 1 ),
     'batch=i'    => \( my $batch_number = 10 ),
 ) or Getopt::Long::HelpMessage(1);
@@ -118,56 +105,51 @@ my $worker_insert = sub {
         query_timeout => -1,
     )->get_database($dbname);
 
+    #@type MongoDB::Collection
     my $coll_align = $db->get_collection('align');
 
-    my @beds;
+    my @data;
     open my $data_fh, '<', $file;
     while ( my $string = <$data_fh> ) {
         next unless defined $string;
         chomp $string;
-        my ( $chr, $start, $end )
-            = ( split /\t/, $string )[ 0, 1, 2 ];
-        next unless $chr =~ /^\w+$/;
-        if ( !$nochr ) {
-            $chr =~ s/chr0?//i;
-        }
-        next unless $start =~ /^\d+$/;
-        next unless $end =~ /^\d+$/;
 
-        if ( $start > $end ) {
-            ( $start, $end ) = ( $end, $start );
-        }
+        my $info = App::RL::Common::decode_header($string);
+        next unless defined $info->{chr};
+        $info->{tag}  = $tag;
+        $info->{type} = $type;
 
         my $align = $coll_align->find_one(
-            {   'chr.name'  => $chr,
-                'chr.start' => { '$lte' => $start },
-                'chr.end'   => { '$gte' => $end }
+            {   'chr.name'  => $info->{chr},
+                'chr.start' => { '$lte' => $info->{start} },
+                'chr.end'   => { '$gte' => $info->{end} }
             }
         );
         if ( !$align ) {
-            print "    Can't locate an align for $chr:$start-$end\n";
+            print "    Can't locate an align for $string\n";
             next;
         }
         else {
-            my $length          = $end - $start + 1;
-            my $ofg_align_start = $start - $align->{chr}{start} + 1;
-            my $ofg_align_end   = $end - $align->{chr}{start} + 1;
+            my $length          = $info->{end} - $info->{start} + 1;
+            my $ofg_align_start = $info->{start} - $align->{chr}{start} + 1;
+            my $ofg_align_end   = $info->{end} - $align->{chr}{start} + 1;
             my $ofg_seq         = substr $align->{seq}, $ofg_align_start - 1, $length;
-            my $ofg_gc          = calc_gc_ratio($ofg_seq);
-            push @beds,
+            my $ofg_gc          = App::Fasops::Common::calc_gc_ratio([$ofg_seq]);
+            push @data,
                 {
                 align => {
                     _id     => $align->{_id},
                     start   => $ofg_align_start,
                     end     => $ofg_align_end,
-                    runlist => AlignDB::IntSpan->new->add_range( $ofg_align_start, $ofg_align_end )
+                    runlist => AlignDB::IntSpan->new->add_pair( $ofg_align_start, $ofg_align_end )
                         ->runlist,
                 },
                 chr => {
-                    name    => $chr,
-                    start   => $start,
-                    end     => $end,
-                    runlist => AlignDB::IntSpan->new->add_range( $start, $end )->runlist,
+                    name  => $info->{chr},
+                    start => $info->{start},
+                    end   => $info->{end},
+                    runlist =>
+                        AlignDB::IntSpan->new->add_pair( $info->{start}, $info->{end} )->runlist,
                 },
                 length => $length,
                 gc     => $ofg_gc,
@@ -179,9 +161,11 @@ my $worker_insert = sub {
     close $data_fh;
 
     print "Inserting file [$file]\n";
+
+    #@type MongoDB::Collection
     my $coll_ofg = $db->get_collection('ofg');
-    while ( scalar @beds ) {
-        my @batching = splice @beds, 0, 10000;
+    while ( scalar @data ) {
+        my @batching = splice @data, 0, 10000;
         $coll_ofg->insert_many( \@batching );
     }
     print "Insert done.\n";
@@ -210,18 +194,6 @@ my $worker_sw = sub {
     #@type MongoDB::Collection
     my $coll_ofgsw = $db->get_collection('ofgsw');
 
-    # AlignDB::GC
-    my $obj = AlignDB::GC->new(
-        wave_window_size => $wave_window_size,
-        wave_window_step => $wave_window_step,
-        vicinal_size     => $vicinal_size,
-        fall_range       => $fall_range,
-        gsw_size         => $gsw_size,
-        stat_window_size => $stat_window_size,
-        stat_window_step => $stat_window_step,
-        skip_mdcw        => 1,
-    );
-
     for my $job (@jobs) {
         my $align = process_message( $db, $job->{_id} );
         next unless $align;
@@ -233,7 +205,7 @@ my $worker_sw = sub {
         }
         printf "    Find %d ofgs in this align\n", scalar @align_ofgs;
 
-        my $align_set = AlignDB::IntSpan->new->add_range( 1, $align->{length} );
+        my $align_set = AlignDB::IntSpan->new->add_pair( 1, $align->{length} );
 
         #----------------------------#
         # ofgsw
@@ -284,17 +256,17 @@ my $worker_sw = sub {
                     length => $rsw->{set}->size,
                 };
                 $ofgsw->{chr}{runlist}
-                    = AlignDB::IntSpan->new->add_range( $ofgsw->{chr}{start}, $ofgsw->{chr}{end} )
+                    = AlignDB::IntSpan->new->add_pair( $ofgsw->{chr}{start}, $ofgsw->{chr}{end} )
                     ->runlist;
                 $ofgsw->{align}{runlist}
-                    = AlignDB::IntSpan->new->add_range( $ofgsw->{align}{start},
+                    = AlignDB::IntSpan->new->add_pair( $ofgsw->{align}{start},
                     $ofgsw->{align}{end} )->runlist;
 
                 # pre allocate
                 $ofgsw->{bed_count} = 0;
                 my $ofgsw_seq = substr $align->{seq}, $rsw->{set}->min - 1, $ofgsw->{length};
                 $ofgsw->{gc} = {
-                    gc   => calc_gc_ratio($ofgsw_seq),
+                    gc   => App::Fasops::Common::calc_gc_ratio([$ofgsw_seq]),
                     mean => 0.0,
                     cv   => 0.0,
                     std  => 0.0,
@@ -310,7 +282,7 @@ my $worker_sw = sub {
 #----------------------------------------------------------#
 # start update
 #----------------------------------------------------------#
-# insert bed files
+# insert position files
 {
     #@type MongoDB::Database
     my $db = MongoDB::MongoClient->new(
