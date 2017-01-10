@@ -3,24 +3,26 @@ use strict;
 use warnings;
 use autodie;
 
-use Getopt::Long qw(HelpMessage);
+use Getopt::Long;
 use Config::Tiny;
 use FindBin;
-use YAML qw(Dump Load DumpFile LoadFile);
+use YAML::Syck;
 
 use MCE;
+use MCE::Flow Sereal => 1;
+
 use MongoDB;
 $MongoDB::BSON::looks_like_number = 1;
 use MongoDB::OID;
 
 use Roman;
 use List::Util qw(first max maxstr min minstr reduce shuffle sum);
-use List::MoreUtils qw(any all uniq zip);
+use List::MoreUtils;
 
 use AlignDB::GC;
 use AlignDB::IntSpan;
-use AlignDB::Window;
 use AlignDB::Stopwatch;
+use AlignDB::Window;
 
 use lib "$FindBin::RealBin/lib";
 use MyUtil qw(process_message check_coll center_resize calc_gc_ratio);
@@ -49,11 +51,11 @@ my $stat_window_step  = $Config->{gc}{stat_window_step};
 
 =head1 NAME
 
-insert_bed.pl - Add bed files to ofg and generate ofgsw.
+insert_position.pl - Add position files to ofg and generate ofgsw.
 
 =head1 SYNOPSIS
 
-    perl insert_bed.pl [options]
+    perl insert_position.pl [options]
       Options:
         --help      -?          brief help message
         --server        STR     MongoDB server IP/Domain name
@@ -75,7 +77,7 @@ insert_bed.pl - Add bed files to ofg and generate ofgsw.
 =cut
 
 GetOptions(
-    'help|?' => sub { HelpMessage(0) },
+    'help|?' => sub { Getopt::Long::HelpMessage(0) },
     'server=s'   => \( my $server       = $Config->{database}{server} ),
     'port=i'     => \( my $port         = $Config->{database}{port} ),
     'db|d=s'     => \( my $dbname       = $Config->{database}{db} ),
@@ -86,12 +88,12 @@ GetOptions(
     'nochr'      => \my $nochr,
     'parallel=i' => \( my $parallel     = 1 ),
     'batch=i'    => \( my $batch_number = 10 ),
-) or HelpMessage(1);
+) or Getopt::Long::HelpMessage(1);
 
 #----------------------------------------------------------#
 # Init
 #----------------------------------------------------------#
-$stopwatch->start_message("Insert bed to $dbname...");
+$stopwatch->start_message("Insert positions to $dbname...");
 
 #----------------------------------------------------------#
 # workers
@@ -109,6 +111,7 @@ my $worker_insert = sub {
     print "Reading file [$file]\n";
 
     # wait forever for responses
+    #@type MongoDB::Database
     my $db = MongoDB::MongoClient->new(
         host          => $server,
         port          => $port,
@@ -194,13 +197,17 @@ my $worker_sw = sub {
     $inner_watch->block_message("Process task [$chunk_id] by worker #$wid");
 
     # wait forever for responses
+    #@type MongoDB::Database
     my $db = MongoDB::MongoClient->new(
         host          => $server,
         port          => $port,
         query_timeout => -1,
     )->get_database($dbname);
 
-    my $coll_ofg   = $db->get_collection('ofg');
+    #@type MongoDB::Collection
+    my $coll_ofg = $db->get_collection('ofg');
+
+    #@type MongoDB::Collection
     my $coll_ofgsw = $db->get_collection('ofgsw');
 
     # AlignDB::GC
@@ -305,16 +312,19 @@ my $worker_sw = sub {
 #----------------------------------------------------------#
 # insert bed files
 {
+    #@type MongoDB::Database
     my $db = MongoDB::MongoClient->new(
         host          => $server,
         port          => $port,
         query_timeout => -1,
     )->get_database($dbname);
     my $name = "ofg";
+
+    #@type MongoDB::Collection
     my $coll = $db->get_collection($name);
     $coll->drop;
 
-    my @args = zip @files, @tags, @types;
+    my @args = List::MoreUtils::PP::mesh @files, @tags, @types;
     my @jobs;
     while ( scalar @args ) {
         my @batching = splice @args, 0, 3;
@@ -325,6 +335,8 @@ my $worker_sw = sub {
     $mce->foreach( \@jobs, $worker_insert, );    # foreach implies chunk_size => 1.
 
     $stopwatch->block_message("Indexing $name");
+
+    #@type MongoDB::IndexView
     my $indexes = $coll->indexes;
     $indexes->create_one( [ 'align._id' => 1 ] );
     $indexes->create_one( [ 'chr.name'  => 1, 'chr.start' => 1, 'chr.end' => 1 ] );
@@ -336,6 +348,7 @@ my $worker_sw = sub {
 
 # ofgsw
 {
+    #@type MongoDB::Database
     my $db = MongoDB::MongoClient->new(
         host          => $server,
         port          => $port,
@@ -347,6 +360,8 @@ my $worker_sw = sub {
 
     # insert ofgsw
     my $name = "ofgsw";
+
+    #@type MongoDB::Collection
     my $coll = $db->get_collection($name);
     $coll->drop;
 
@@ -355,6 +370,8 @@ my $worker_sw = sub {
 
     # indexing
     $stopwatch->block_message("Indexing $name");
+
+    #@type MongoDB::IndexView
     my $indexes = $coll->indexes;
     $indexes->create_one( [ 'align._id'    => 1 ] );
     $indexes->create_one( [ 'ofg._id'      => 1 ] );
