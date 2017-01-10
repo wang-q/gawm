@@ -3,6 +3,8 @@
 ## Test command lines
 
 ```bash
+mkdir -p ~/data/dumps/mongodb/
+
 export GAWM_MONGO_DIR=$HOME/share/mongodb30/bin
 export GAWM_PORT=27030
 export GAWM_PARALLEL=4
@@ -20,6 +22,9 @@ perl gen_mg.pl -d Atha_GC -n Atha --port $GAWM_PORT \
     --length 500000 --parallel $GAWM_PARALLEL
 
 perl insert_gcwave.pl -d Atha_GC --port $GAWM_PORT --batch 10 --parallel $GAWM_PARALLEL
+
+rm -fr ~/data/dumps/mongodb/Atha_GC
+time $GAWM_MONGO_DIR/mongodump --port $GAWM_PORT --db Atha_GC --out ~/data/dumps/mongodb/
 
 perl update_sw_cv.pl -d Atha_GC --port $GAWM_PORT --batch 10 --parallel $GAWM_PARALLEL
 
@@ -42,6 +47,24 @@ perl insert_position.pl -d Atha_TDNA_SW --port $GAWM_PORT --batch 10 --parallel 
     --tag tdna --type RATM -f ~/data/salk/Atha/T-DNA.RATM.pos.txt
 
 perl stat_mg.pl -d Atha_TDNA_SW --port $GAWM_PORT --by type --chart --replace ofg="insert sites"
+
+#----------------------------#
+# gsw count
+#----------------------------#
+$GAWM_MONGO_DIR/mongo Atha_GC_TDNA --port $GAWM_PORT --eval "db.dropDatabase();"
+time $GAWM_MONGO_DIR/mongorestore ~/data/dumps/mongodb/Atha_GC --port $GAWM_PORT --db Atha_GC_TDNA
+
+perl count_position.pl -d Atha_GC_TDNA --port $GAWM_PORT --batch 10 --parallel $GAWM_PARALLEL \
+    --run insert \
+    -f ~/data/salk/Atha/T-DNA.CSHL.pos.txt \
+    -f ~/data/salk/Atha/T-DNA.FLAG.pos.txt \
+    -f ~/data/salk/Atha/T-DNA.MX.pos.txt   \
+    -f ~/data/salk/Atha/T-DNA.RATM.pos.txt
+
+perl count_position.pl -d Atha_GC_TDNA --port $GAWM_PORT --batch 10 --parallel $GAWM_PARALLEL \
+    --run count
+
+perl stat_mg.pl -d Atha_GC_TDNA --port $GAWM_PORT --by type --chart
 
 unset GAWM_MONGO_DIR
 unset GAWM_PORT
@@ -66,17 +89,18 @@ rm ~/share/mongodb/data/mongod.lock
 
 ## Results
 
-* 4 threads: i7-6700k, 32G, SSD, macOS 10.11
+* 4 threads: macOS 10.11, i7-6700k, 32G, SSD
 
     |        |          |  2.6.11 |   3.0.7 |   3.4.1 |
     |:------:|:--------:|--------:|--------:|--------:|
     | gcwave |   gen    |     9'' |     9'' |     9'' |
     |        |  gcwave  | 10'52'' | 10'53'' | 10'48'' |
+    |        |   dump   |     1'' |     3'' |     9'' |
     |        |  sw_cv   | 41'19'' | 40'55'' | 40'56'' |
     |        |   stat   |         |    12'' |    10'' |
     | ofgsw  | position |  5'16'' |  4'58'' |  4'45'' |
     |        |   stat   |    21'' |    27'' |    22'' |
-    |        |          |         |         |         |
-    |        |          |         |         |         |
-    |        |          |         |         |         |
-
+    | count  | restore  |    49'' |         |    30'' |
+    |        |  insert  |    54'' |         |    58'' |
+    |        |  count   |  1'56'' |         |  1'56'' |
+    |        |   stat   |     8'' |         |     9'' |
