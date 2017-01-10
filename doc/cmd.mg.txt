@@ -424,7 +424,7 @@ perl mg\chart_mg.pl --replace ofg="Replication origins" -i  d:\wq\GC\autochart\1
 perl mg\chart_mg.pl --replace ofg="Replication origins" -i  d:\wq\GC\autochart\131230_repli\Human_BED_RepliSeq_valleys.mg.xlsx
 
 #----------------------------------------------------------#
-# Ath 
+# Ath
 #----------------------------------------------------------#
 cd ~/Scripts/alignDB
 
@@ -434,7 +434,7 @@ perl mg/gen_mg.pl -d Ath -t "3702,Ath" --dir /home/wangq/data/alignment/arabidop
 rm -fr ~/data/mongodb/Ath
 ~/share/mongodb/bin/mongodump --db Ath --out ~/data/mongodb/
 
-~/share/mongodb/bin/mongo Ath_GC --eval "db.dropDatabase();" 
+~/share/mongodb/bin/mongo Ath_GC --eval "db.dropDatabase();"
 ~/share/mongodb/bin/mongorestore ~/data/mongodb/Ath --db Ath_GC
 
 # Runtime 2 minutes and 56 seconds.
@@ -446,7 +446,7 @@ perl mg/insert_mg_gcwave.pl -d Ath_GC --batch 10 --parallel 12
 # TDNA gsw_count
 #----------------------------#
 
-~/share/mongodb/bin/mongo Ath_GC_TDNA --eval "db.dropDatabase();" 
+~/share/mongodb/bin/mongo Ath_GC_TDNA --eval "db.dropDatabase();"
 ~/share/mongodb/bin/mongorestore ~/data/mongodb/Ath_GC --db Ath_GC_TDNA
 
 perl mg/count_mg_bed.pl -d Ath_GC_TDNA --parallel 8 --run insert  \
@@ -471,7 +471,7 @@ perl mg/stat_mg.pl -d Ath_GC_TDNA
 # TDNA ofgsw
 #----------------------------#
 
-~/share/mongodb/bin/mongo Ath_BED_TDNA --eval "db.dropDatabase();" 
+~/share/mongodb/bin/mongo Ath_BED_TDNA --eval "db.dropDatabase();"
 ~/share/mongodb/bin/mongorestore ~/data/mongodb/Ath --db Ath_BED_TDNA
 
 # Runtime 48 minutes and 53 seconds.
