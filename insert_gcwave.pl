@@ -346,7 +346,7 @@ sub insert_gsw {
         my $gsw_type;
         my @gsw_windows;
         if ( $ex_type eq 'T' ) {    # push trough to gsw
-            $gsw_type = 'D';        # descend, left of trough£¬right of crest
+            $gsw_type = 'D';        # descend, left of trough -- right of crest
             push @gsw_windows,
                 {
                 type => 'T',
