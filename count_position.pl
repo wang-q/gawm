@@ -43,7 +43,6 @@ count_position.pl - Add position files and count intersections.
         --db        -d  STR     database name
         --file      -f  @STR    bed files
         --run       -r  STR     all, insert or count, default is [all]
-        --nochr                 remove 'chr' from chr_name
         --parallel      INT     run in parallel mode, [1]
         --batch         INT     alignments processed in one child process, [10]
 
